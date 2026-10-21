@@ -2877,6 +2877,32 @@
   {
    "title": "再见晚风",
    "file": "https://whxclp.github.io/yinbox3/再见晚风.mp4"
+  },
+  {
+   "title": "飞（MV·宋祖英）",
+   "artist": "宋祖英",
+   "file": "https://whxclp.github.io/yinbox3/宋祖英《飞》.mp4",
+   "lrc": "",
+   "type": "mv",
+   "new": true
+  },
+  {
+   "title": "二人转 双回门（赵本山·宋祖英）",
+   "artist": "赵本山 / 宋祖英",
+   "file": "https://whxclp.github.io/yinbox3/二人转双回门赵本山宋祖英.mp4",
+   "lrc": "",
+   "type": "mv",
+   "coll": "二人转·小帽",
+   "new": true
+  },
+  {
+   "title": "二人转 王二姐思夫（赵本山）",
+   "artist": "赵本山",
+   "file": "https://whxclp.github.io/yinbox3/二人转王二姐思夫赵本山.mp4",
+   "lrc": "",
+   "type": "mv",
+   "coll": "二人转·正戏",
+   "new": true
   }
  ]
 }
