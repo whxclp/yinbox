@@ -512,6 +512,18 @@ function render(){
       if(c){ const el = document.getElementById(c.dataset.t); if(el) el.scrollIntoView({behavior:'smooth'}); }
     };
   }
+  // 点页面空白处 = 暂停/继续播放（歌曲行/按钮/导航/输入框除外），只注册一次
+  if(!document._toggleHooked){
+    document._toggleHooked = true;
+    document.addEventListener('click', e=>{
+      const t = e.target;
+      if(t.closest('.song,.chip,button,input,.player,#navchips,#lyricBox')) return;
+      if(cur>=0){
+        if(curMedia.paused){ curMedia.play().catch(()=>{}); }
+        else { curMedia.pause(); }
+      }
+    });
+  }
 }
 function esc(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
