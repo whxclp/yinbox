@@ -49,6 +49,7 @@
   #navchips{display:flex; flex-wrap:wrap; gap:6px; flex:1; min-width:0;}
   .chip{font-size:12px; padding:4px 10px; border-radius:999px; background:var(--btn); color:var(--txt); cursor:pointer; border:1px solid var(--bd); white-space:nowrap;}
   .chip:hover{background:var(--btn-hi); border-color:var(--acc);}
+  .sub-title{font-size:11px;color:var(--acc);margin:8px 4px 2px;font-weight:600;}
   .stat{color:#ff8c00; font-size:13px; line-height:1.7;}
   .stat b{color:#ffd93d; font-weight:600;}
   .group-title{
@@ -462,8 +463,26 @@ function render(){
     // 收藏优先展示（平时听歌），其次歌曲，再合集与其他分类
     html += sec(cats.fav,'收藏','','','fav');
     html += sec(cats.song,'歌曲','','','song');
+    // 合集分类：含「·」的按父名聚合成父子区块（如 二人转→小帽/正戏），其余单层展示
+    const secGroups = [];   // 父子区块
+    const secPlain = [];    // 单层合集名
     Object.keys(colls).sort((a,b)=>String(a).localeCompare(String(b),'zh-Hans-CN',{numeric:true}))
-      .forEach(name=>{ html += sec(colls[name], '合集 · '+name, name, 'c', 'coll-'+name); });
+      .forEach(name=>{
+        if(name.indexOf('·')>=0){
+          const fa = name.split('·')[0];
+          let g = secGroups.find(x=>x.label===fa);
+          if(!g){ g = {label:fa, groups:[]}; secGroups.push(g); }
+          g.groups.push({tagText:name.split('·')[1], items:colls[name]});
+        } else { secPlain.push(name); }
+      });
+    secGroups.forEach(g=>{
+      const total = g.groups.reduce((n,x)=>n+x.items.length,0);
+      html += '<div class="group-title" id="sec-coll-'+g.label+'">'+g.label+'（'+total+'）</div>';
+      g.groups.forEach(sub=>{
+        html += '<div class="sub-title">'+sub.tagText+'（'+sub.items.length+'）</div>' + secItems(sub.items, sub.tagText, 'c');
+      });
+    });
+    secPlain.forEach(name=>{ html += sec(colls[name], '合集 · '+name, name, 'c', 'coll-'+name); });
     html += sec(cats.instrument,'器乐曲','器乐','i','instrument');
     html += sec(cats.puju,'蒲剧','蒲剧','p','puju');
     html += sec(cats.errenzhuan,'二人转','二人转','e','errenzhuan');
@@ -483,11 +502,10 @@ function render(){
     chip('歌曲','sec-song');
     chip('器乐曲','sec-instrument');
     chip('蒲剧','sec-puju');
-    chip('二人转','sec-errenzhuan');
+    if(colls['二人转·小帽']||colls['二人转·正戏']){ chip('二人转','sec-coll-二人转'); }
+    else { chip('二人转','sec-errenzhuan'); }
     chip('MV','sec-mv');
     if(colls['杜殿虎歌曲'] && colls['杜殿虎歌曲'].length){ chip('杜殿虎歌曲','sec-coll-杜殿虎歌曲'); }
-    if(colls['小帽'] && colls['小帽'].length){ chip('小帽','sec-coll-小帽'); }
-    if(colls['正戏'] && colls['正戏'].length){ chip('正戏','sec-coll-正戏'); }
     nav.innerHTML = chips.join('');
     nav.onclick = e=>{
       const c = e.target.closest('.chip');
