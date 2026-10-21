@@ -502,12 +502,10 @@ function render(){
     chip('歌曲','sec-song');
     chip('器乐曲','sec-instrument');
     chip('蒲剧','sec-puju');
-    if(colls['二人转·小帽']||colls['二人转·正戏']){ chip('二人转','sec-coll-二人转'); }
+    if(colls['二人转·小帽']||colls['二人转·正戏']){ chip('二人转（小帽、正戏）','sec-coll-二人转'); }
     else { chip('二人转','sec-errenzhuan'); }
     chip('MV','sec-mv');
     if(colls['杜殿虎歌曲'] && colls['杜殿虎歌曲'].length){ chip('杜殿虎歌曲','sec-coll-杜殿虎歌曲'); }
-    if(colls['二人转·小帽'] && colls['二人转·小帽'].length){ chip('小帽','sec-coll-二人转·小帽'); }
-    if(colls['二人转·正戏'] && colls['二人转·正戏'].length){ chip('正戏','sec-coll-二人转·正戏'); }
     nav.innerHTML = chips.join('');
     nav.onclick = e=>{
       const c = e.target.closest('.chip');
