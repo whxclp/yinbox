@@ -61,12 +61,15 @@
   .group-title.sub::before{width:3px; height:11px; background:var(--sub);}
   #list{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding-top:2px;}
   #list .group-title{grid-column:1/-1;}
+  #list .sub-title{grid-column:1/-1;}
   .song{
     display:flex; align-items:center; gap:6px; padding:8px 6px;
     background:var(--panel); border:1px solid var(--line); border-radius:8px; cursor:pointer; min-width:0;
   }
   .song:active{background:var(--btn-hi);}
   .song.playing{border-color:var(--acc);}
+.song.ext{grid-column:1/-1; border-style:dashed; border-color:#6e7681;}
+.song.ext .t{color:#ffd93d;}
   .song .idx{
     width:22px; height:22px; border-radius:50%; background:var(--btn); border:1px solid var(--line);
     display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--sub); flex:none;
@@ -426,15 +429,13 @@ function histDel(kw){
   renderHist();
 }
 function render(){
-  const cats = {fav:[], song:[], instrument:[], puju:[], errenzhuan:[], mv:[]};
-  const colls = {};
-  const exts = {};
-  shown.forEach(s=>{
-    if(favs[s.file] || favs[s.title]){ cats.fav.push(s); return; }  // 已收藏→「收藏」分类（平时听歌）
-    if(isExtFile(s)){ const k = s.coll || classify(s); (exts[k]||(exts[k]=[])).push(s); return; }  // 外链条目单独归组
-    if(s.coll){ (colls[s.coll] || (colls[s.coll]=[])).push(s); }
-    else { cats[classify(s)].push(s); }
-  });
+const cats = {fav:[], song:[], instrument:[], puju:[], errenzhuan:[], mv:[]};
+const colls = {};
+shown.forEach(s=>{
+if(favs[s.file] || favs[s.title]){ cats.fav.push(s); return; }  // 已收藏→「收藏」分类（平时听歌）
+if(s.coll){ (colls[s.coll] || (colls[s.coll]=[])).push(s); }
+else { cats[classify(s)].push(s); }
+});
   const st = document.getElementById('stat');
   let html = '';
   document.getElementById('list').className = favFilter ? 'fav-grid' : '';
@@ -443,25 +444,27 @@ function render(){
   } else if(!shown.length){
     html = '<div class="empty">没有符合筛选条件的歌曲。</div>';
   } else {
-    const sec = (items, label, tagText, tagClass, secId)=>{
-      if(!items.length && secId !== 'fav') return '';   // 「收藏」分类空也保留显示（收藏（0））
-      // shown 已按标题自然排序，分组直接沿用该顺序 = 播放顺序
-      return '<div class="group-title" id="sec-'+(secId||'')+'">'+label+'（'+items.length+'）</div>' + secItems(items, tagText, tagClass);
-    };
+const sec = (items, label, tagText, tagClass, secId)=>{
+if(!items.length && secId !== 'fav') return '';   // 「收藏」分类空也保留显示（收藏（0））
+// 网址条目排到组内末尾，普通条目保持标题自然排序
+items = items.slice().sort((a,b)=>(isExtFile(a)?1:0)-(isExtFile(b)?1:0));
+return '<div class="group-title" id="sec-'+(secId||'')+'">'+label+'（'+items.length+'）</div>' + secItems(items, tagText, tagClass);
+};
     const secItems = (items, tagText, tagClass)=>{
       let s = '';
       items.forEach((it,i)=>{
-        const isPlaying = cur>=0 && shown[cur]===it;
-        const fav = !!favs[it.file] || !!favs[it.title];
-        const tag = tagText ? `<span class="tag ${tagClass}">${tagText}</span>` : '';
-        s += `<div class="song${isPlaying?' playing':''}" onclick="playAt(${shown.indexOf(it)})" title="点击播放">
-          <span class="idx${fav?'':' off'}" onclick="event.stopPropagation();toggleFav('${esc(it.file)}','${esc(it.title||'')}')" title="${fav?'取消收藏（点序号）':'未收藏（点序号恢复收藏）'}">${isPlaying?'▶':i+1}</span>
-          <span class="meta">
-            <div class="t">${esc(it.title||it.file.split('/').pop())}</div>
-            <div class="a">${esc(it.artist||'')}</div>
-          </span>
-          ${tag}
-        </div>`;
+const isPlaying = cur>=0 && shown[cur]===it;
+const fav = !!favs[it.file] || !!favs[it.title];
+const ext = isExtFile(it);
+const tag = tagText ? `<span class="tag ${tagClass}">${tagText}</span>` : '';
+s += `<div class="song${isPlaying?' playing':''}${ext?' ext':''}" onclick="playAt(${shown.indexOf(it)})" title="${ext?'点击打开网址':'点击播放'}">
+<span class="idx${fav?'':' off'}" onclick="event.stopPropagation();toggleFav('${esc(it.file)}','${esc(it.title||'')}')" title="${fav?'取消收藏（点序号）':'未收藏（点序号恢复收藏）'}">${isPlaying?'▶':i+1}</span>
+<span class="meta">
+<div class="t">${ext?'🔗 ':''}${esc(it.title||it.file.split('/').pop())}</div>
+<div class="a">${esc(it.artist||'')}</div>
+</span>
+${tag}
+</div>`;
       });
       return s;
     };
@@ -487,22 +490,11 @@ function render(){
         html += '<div class="sub-title" id="sec-coll-'+g.label+'·'+sub.tagText+'">'+sub.tagText+'（'+sub.items.length+'）</div>' + secItems(sub.items, sub.tagText, 'c');
       });
     });
-    secPlain.forEach(name=>{ html += sec(colls[name], '合集 · '+name, name, 'c', 'coll-'+name); });
-    // 外链条目：紧跟所属合集之后单独成行展示
-    secGroups.forEach(g=>{
-      Object.keys(exts).filter(k=>k.indexOf(g.label+'·')===0).forEach(k=>{
-        html += sec(exts[k], k+' · 外链', '外链', 'x', 'ext-'+k);
-      });
-    });
-    secPlain.forEach(name=>{ if(exts[name]) html += sec(exts[name], name+' · 外链', '外链', 'x', 'ext-'+name); });
-    html += sec(cats.instrument,'器乐曲','器乐','i','instrument');
-    html += sec(cats.puju,'蒲剧','蒲剧','p','puju');
-    html += sec(cats.errenzhuan,'二人转','二人转','e','errenzhuan');
-    html += sec(cats.mv,'MV','MV','m','mv');
-    const catNames = {puju:'蒲剧', errenzhuan:'二人转', mv:'MV', instrument:'器乐曲', song:'歌曲'};
-    ['puju','errenzhuan','mv','instrument','song'].forEach(c=>{
-      if(exts[c]) html += sec(exts[c], catNames[c]+' · 外链', '外链', 'x', 'ext-'+c);
-    });
+secPlain.forEach(name=>{ html += sec(colls[name], '合集 · '+name, name, 'c', 'coll-'+name); });
+html += sec(cats.instrument,'器乐曲','器乐','i','instrument');
+html += sec(cats.puju,'蒲剧','蒲剧','p','puju');
+html += sec(cats.errenzhuan,'二人转','二人转','e','errenzhuan');
+html += sec(cats.mv,'MV','MV','m','mv');
   }
   const statEl = document.getElementById('statTop');
   if(statEl){ statEl.innerHTML = '共 '+songs.length+' 首 · 显示 '+shown.length+' 首'; }
