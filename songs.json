@@ -2984,6 +2984,18 @@
       "lrc": "https://whxclp.github.io/yinbox3/蒲剧祭灵_王天明.lrc",
       "type": "mv",
       "new": true
+    },
+    {
+      "title": "蒲剧《收姜维》（王天明）",
+      "artist": "王天明",
+      "file": "https://whxclp.github.io/yinbox3/蒲剧收姜维_王天明.part1.mp4",
+      "parts": [
+        "https://whxclp.github.io/yinbox3/蒲剧收姜维_王天明.part1.mp4",
+        "https://whxclp.github.io/yinbox3/蒲剧收姜维_王天明.part2.mp4"
+      ],
+      "lrc": "https://whxclp.github.io/yinbox3/蒲剧收姜维_王天明.lrc",
+      "type": "mv",
+      "new": true
     }
   ]
 }
