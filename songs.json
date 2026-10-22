@@ -2932,6 +2932,13 @@
    "file": "https://list.youku.com/albumlist/show/id_22886208.html",
    "lrc": "",
    "new": true
+  },
+  {
+   "title": "蒲剧搜索（B站在线）",
+   "artist": "",
+   "file": "https://search.bilibili.com/all?keyword=%E8%92%B2%E5%89%A7&from_source=web_search&spm_id_from=333.1387&search_source=5",
+   "lrc": "",
+   "new": true
   }
  ]
 }
