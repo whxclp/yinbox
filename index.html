@@ -602,6 +602,13 @@ function playAt(i){
   if(i<0 || i>=shown.length) return;
   cur = i;
   const s = shown[i];
+  if(!/\.(mp3|mp4|m4a|aac|wav|flac|ogg)(\?|#|$)/i.test(s.file||'')){
+    // 外链条目（如B站合集）：新标签页打开，不进播放器
+    window.open(s.file, '_blank');
+    document.getElementById('nowTitle').textContent = '外链：' + (s.title || s.file);
+    render();
+    return;
+  }
   stopMedia();
   if(s.parts && s.parts.length){
     // 分段大文件：Blob 拼接播放
