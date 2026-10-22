@@ -2939,6 +2939,43 @@
    "file": "https://search.bilibili.com/all?keyword=%E8%92%B2%E5%89%A7&from_source=web_search&spm_id_from=333.1387&search_source=5",
    "lrc": "",
    "new": true
+  },
+  {
+   "title": "蒲剧《空城计》十万埋伏一张琴（王天明）",
+   "artist": "王天明",
+   "file": "https://whxclp.github.io/yinbox3/十万埋伏一张琴.mp4",
+   "lrc": "https://whxclp.github.io/yinbox3/十万埋伏一张琴.lrc",
+   "type": "mv",
+   "new": true
+  },
+  {
+   "title": "蒲剧《空城计》兵临城下觅知音（王天明）",
+   "artist": "王天明",
+   "file": "https://whxclp.github.io/yinbox3/兵临城下觅知音.mp4",
+   "lrc": "https://whxclp.github.io/yinbox3/兵临城下觅知音.lrc",
+   "type": "mv",
+   "new": true
+  },
+  {
+   "title": "蒲剧《空城计》冒险退兵互成全（王天明）",
+   "artist": "王天明",
+   "file": "https://whxclp.github.io/yinbox3/冒险退兵互成全.mp4",
+   "lrc": "https://whxclp.github.io/yinbox3/冒险退兵互成全.lrc",
+   "type": "mv",
+   "new": true
+  },
+  {
+   "title": "蒲剧《空城计》全场（1981年演出录像）",
+   "artist": "王天明",
+   "file": "https://whxclp.github.io/yinbox3/蒲剧空城计_完整版.part1.mp4",
+   "parts": [
+    "https://whxclp.github.io/yinbox3/蒲剧空城计_完整版.part1.mp4",
+    "https://whxclp.github.io/yinbox3/蒲剧空城计_完整版.part2.mp4",
+    "https://whxclp.github.io/yinbox3/蒲剧空城计_完整版.part3.mp4",
+    "https://whxclp.github.io/yinbox3/蒲剧空城计_完整版.part4.mp4"
+   ],
+   "type": "mv",
+   "new": true
   }
  ]
 }
