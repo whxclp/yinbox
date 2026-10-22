@@ -279,6 +279,9 @@ function classify(s){
   for(const i of INSTRUMENTS){ if(raw.includes(i)) return 'instrument'; }
   return 'song';
 }
+function isExtFile(s){
+  return !/\.(mp3|mp4|m4a|aac|wav|flac|ogg)(\?|#|$)/i.test(String(s && s.file || ''));
+}
 function applyFilter(){
   const kw = (document.getElementById('kw').value||'').trim().toLowerCase();
   shown = songs.filter(s=>{
@@ -425,8 +428,10 @@ function histDel(kw){
 function render(){
   const cats = {fav:[], song:[], instrument:[], puju:[], errenzhuan:[], mv:[]};
   const colls = {};
+  const exts = {};
   shown.forEach(s=>{
     if(favs[s.file] || favs[s.title]){ cats.fav.push(s); return; }  // 已收藏→「收藏」分类（平时听歌）
+    if(isExtFile(s)){ const k = s.coll || classify(s); (exts[k]||(exts[k]=[])).push(s); return; }  // 外链条目单独归组
     if(s.coll){ (colls[s.coll] || (colls[s.coll]=[])).push(s); }
     else { cats[classify(s)].push(s); }
   });
@@ -483,10 +488,21 @@ function render(){
       });
     });
     secPlain.forEach(name=>{ html += sec(colls[name], '合集 · '+name, name, 'c', 'coll-'+name); });
+    // 外链条目：紧跟所属合集之后单独成行展示
+    secGroups.forEach(g=>{
+      Object.keys(exts).filter(k=>k.indexOf(g.label+'·')===0).forEach(k=>{
+        html += sec(exts[k], k+' · 外链', '外链', 'x', 'ext-'+k);
+      });
+    });
+    secPlain.forEach(name=>{ if(exts[name]) html += sec(exts[name], name+' · 外链', '外链', 'x', 'ext-'+name); });
     html += sec(cats.instrument,'器乐曲','器乐','i','instrument');
     html += sec(cats.puju,'蒲剧','蒲剧','p','puju');
     html += sec(cats.errenzhuan,'二人转','二人转','e','errenzhuan');
     html += sec(cats.mv,'MV','MV','m','mv');
+    const catNames = {puju:'蒲剧', errenzhuan:'二人转', mv:'MV', instrument:'器乐曲', song:'歌曲'};
+    ['puju','errenzhuan','mv','instrument','song'].forEach(c=>{
+      if(exts[c]) html += sec(exts[c], catNames[c]+' · 外链', '外链', 'x', 'ext-'+c);
+    });
   }
   const statEl = document.getElementById('statTop');
   if(statEl){ statEl.innerHTML = '共 '+songs.length+' 首 · 显示 '+shown.length+' 首'; }
