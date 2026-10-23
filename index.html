@@ -665,7 +665,21 @@ function playAt(i){
   setMediaSession(s.title || s.file.split('/').pop(), s.artist || '');
   showLyric(lrc, 0);
   curMedia.ontimeupdate = ()=> updateProg(lrc);
-  curMedia.onended = ()=> nextSong(true);
+  let endRetried = false;
+  curMedia.onended = ()=>{
+    // 保险：时长>10s 却在进度<1s 时触发 ended，多半是资源缓存污染/加载异常，
+    // 加缓存戳重试一次，避免"秒播完就切下一首"
+    const sNow = shown[cur];
+    if(!endRetried && curMedia.duration > 10 && (curMedia.currentTime||0) < 1
+       && sNow && sNow.file && !(sNow.parts && sNow.parts.length)){
+      endRetried = true;
+      const sep = sNow.file.indexOf('?')>=0 ? '&' : '?';
+      loadMedia(curMedia, sNow.file + sep + 'r=' + Date.now());
+      curMedia.play().catch(()=>{});
+      return;
+    }
+    nextSong(true);
+  };
   syncControls();
   render();
 }
