@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.4.0
+// @version      1.4.1
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -462,9 +462,12 @@
       if (r.width < 260 || r.height < 140) return;
       if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) hit = v;
     });
-    if (hit && cur !== hit) {
-      showFor(hit);
-      if (bar.classList.contains('mvt-on')) positionBar();
+    if (hit) {
+      if (cur !== hit) { showFor(hit); }
+      /* 悬停视频即滑出（同 h5player），并保持对齐到视频右缘 */
+      clearTimeout(hideTimer);
+      if (!bar.classList.contains('mvt-on')) { slideDown(); }
+      positionBar();
     }
   }
 
