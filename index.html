@@ -223,6 +223,7 @@
     <div class="tip">试听 = 直接播放。归队 = 标记要加入歌单，把标记清单发给豆包后批量下载。VIP/不能播的已自动过滤。</div>
   </div>
 <main id="list"><div class="empty">正在加载歌单…</div></main>
+<div id="diagBadge" style="display:none;position:fixed;left:8px;bottom:8px;background:#7a1f1f;color:#ffe2e2;font-size:12px;padding:5px 9px;border-radius:6px;z-index:99999;max-width:92vw;word-break:break-all;cursor:pointer;" onclick="this.style.display='none'" title="点击隐藏"></div>
 <div id="mvWrap"><video id="mvPlayer" playsinline></video></div>
 <div class="lyric" id="lyricBox"></div>
 <script>
@@ -667,6 +668,11 @@ function playAt(i){
   curMedia.ontimeupdate = ()=> updateProg(lrc);
   let endRetried = false;
   curMedia.onended = ()=>{
+    // 诊断：ended触发时的真实内部状态（时长/进度/速率），异常时可截图定位
+    try{
+      const srcName = decodeURIComponent((curMedia.currentSrc||'').split('/').pop()||'').split('?')[0].slice(0,26);
+      mediaDiag('播完信号 t=' + (curMedia.currentTime||0).toFixed(2) + 's / ' + (curMedia.duration||0).toFixed(2) + 's 速率×' + curMedia.playbackRate + ' 源=' + srcName);
+    }catch(e){}
     // 保险：时长>10s 却在进度<1s 时触发 ended，多半是资源缓存污染/加载异常，
     // 加缓存戳重试一次，避免"秒播完就切下一首"
     const sNow = shown[cur];
@@ -684,6 +690,21 @@ function playAt(i){
   render();
 }
 let playing = false;
+function mediaDiag(msg){
+  const el = document.getElementById('diagBadge');
+  if(!el) return;
+  el.textContent = '🔍 ' + msg;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ el.style.display='none'; }, 20000);
+}
+[audio, mvPlayer].forEach(m=>{
+  m.addEventListener('error', ()=>{
+    if(!m.currentSrc) return;   // 空源触发的error不算
+    const me = m.error;
+    mediaDiag('加载出错 code=' + (me?me.code:'?') + ' ' + (me?me.message:'') + ' @' + decodeURIComponent((m.currentSrc||'').split('/').pop()||'').slice(0,40));
+  });
+});
 function clearFailMsg(){
   const nt = document.getElementById('nowTitle');
   if(nt.textContent.indexOf('播放失败') === 0){
