@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.0.0
+// @version      1.0.1
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -77,14 +77,18 @@
 
   function updateRateBtn() {
     if (!cur) return;
-    rateBtn.textContent = '倍速 ' + cur.playbackRate + 'x';
+    var label = rateBtn.querySelector('.mvt-label');
+    if (label) label.textContent = '倍速 ' + cur.playbackRate + 'x';
   }
 
   /* ================= UI 构建 ================= */
   function mBtn(text, hasMenu, cls) {
     var b = document.createElement('button');
     b.className = 'mvt-btn' + (hasMenu ? ' mvt-has-menu' : '') + (cls ? ' ' + cls : '');
-    b.textContent = text;
+    var sp = document.createElement('span');
+    sp.className = 'mvt-label';
+    sp.textContent = text;
+    b.appendChild(sp);
     return b;
   }
 
