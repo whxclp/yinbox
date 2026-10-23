@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.2.0
+// @version      1.2.1
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -153,11 +153,17 @@
     mvtRecording = true;
     var chunks = [];
     var wasRate = v.playbackRate;
+    var wasMuted = v.muted;
+    var wasVolume = v.volume;
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = function () {
       mvtRecording = false;
       v.removeEventListener('ratechange', keepRate);
       v.playbackRate = wasRate;
+      v.muted = wasMuted;
+      v.volume = wasVolume;
+      /* 关键：释放捕获流，否则元素声音可能被劫持变哑 */
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
       var b = new Blob(chunks, { type: 'video/webm' });
       if (b.size < 1000) { toast('合成失败：没录到内容'); return; }
       saveBlob(b, '合成_' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.webm');
@@ -181,7 +187,7 @@
       keepRate();
     }, 1000);
     /* 安全上限：最多录 40 分钟 */
-    setTimeout(function () { if (mvtRecording && rec.state !== 'inactive') { clearInterval(iv); rec.stop(); } }, 40 * 60 * 1000);
+    setTimeout(function () { if (mvtRecording && rec.state !== 'inactive') { clearInterval(iv); try { rec.stop(); } catch (e) {} } }, 40 * 60 * 1000);
     try { v.currentTime = 0; } catch (e) {}
     v.muted = false;
     var pr = v.play();
