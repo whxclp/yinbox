@@ -557,27 +557,43 @@ function setPlaybackState(p){
   if('mediaSession' in navigator){ try{ navigator.mediaSession.playbackState = p; }catch(e){} }
 }
 // ===== 播放 =====
+let loadGen = 0;      // 加载代数：切歌时自增，作废所有未完成的分段加载
+let segCtrl = null;   // 当前分段下载的中断器
+function invalidatePendingLoad(){
+  loadGen++;
+  if(segCtrl){ try{ segCtrl.abort(); }catch(e){} segCtrl = null; }
+}
 async function loadSegmented(media, parts){
   // 分段合并播放：mp3/mp4 大文件拆成多段上传，这里顺序拉取后 Blob 拼接
+  // 若中途切歌（loadGen 变化），立即放弃，不再抢占正在播放的歌曲
+  const gen = loadGen;
+  if(segCtrl){ try{ segCtrl.abort(); }catch(e){} }
+  const ctrl = new AbortController(); segCtrl = ctrl;
   try{
     const blobs = [];
     for(const p of parts){
       let got = false;
       for(const pre of ['', 'songs/']){
         try{
-          const r = await fetch(/^https?:\/\//i.test(p) ? p : pre + encodeURI(p), {cache:'no-store'});
+          const r = await fetch(/^https?:\/\//i.test(p) ? p : pre + encodeURI(p), {cache:'no-store', signal: ctrl.signal});
           if(r.ok){ blobs.push(await r.blob()); got = true; break; }
-        }catch(e){}
+        }catch(e){ if(e && e.name === 'AbortError') throw e; }
       }
+      if(gen !== loadGen) return;
       if(!got) throw new Error('404 ' + p);
     }
+    if(gen !== loadGen) return;
     const isV = /\.mp4$/i.test(parts[0]);
     const url = URL.createObjectURL(new Blob(blobs, {type: isV ? 'video/mp4' : 'audio/mpeg'}));
     media.src = url;
     media.play().catch(()=>{});
   }catch(e){
+    if(e && e.name === 'AbortError') return;
+    if(gen !== loadGen) return;
     const s = (typeof cur === 'number' && shown[cur]) ? shown[cur] : null;
-    document.getElementById('nowTitle').textContent = '播放失败：' + ((s && s.title) || f || '');
+    document.getElementById('nowTitle').textContent = '播放失败：' + ((s && s.title) || '');
+  } finally {
+    if(segCtrl === ctrl) segCtrl = null;
   }
 }
 function loadMedia(media, f){
@@ -598,6 +614,7 @@ function loadMedia(media, f){
   setSrc();
 }
 function stopMedia(){
+  invalidatePendingLoad();
   audio.pause();
   audio.removeAttribute('src');
   audio.load();
