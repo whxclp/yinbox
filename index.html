@@ -166,6 +166,11 @@
     .ctrls{gap:16px;}
     .ctrls .big{min-width:56px; height:46px; font-size:16px;}
   }
+  /* h5player 扩展：下拉面板宽度兜底，防止超出屏幕 */
+  .h5player-popup-wrap sl-dropdown::part(panel){
+    max-width: calc(100vw - 16px);
+    overflow: auto;
+  }
 </style>
 </head>
 <body>
@@ -975,6 +980,29 @@ document.getElementById('kw').addEventListener('input', applyFilter);
 document.getElementById('modeBtn').textContent = MODES[mode];
 syncControls();
 loadSongs();
+
+// ===== h5player 扩展菜单左移 =====
+// 该扩展的"菜单"下拉锚在顶栏最右侧按钮上且默认向右展开，会超出屏幕右边被裁切（设置项看不见）。
+// 扩展把顶栏注入普通页面 DOM，这里用站点脚本持续把它的下拉改为 bottom-end（向左展开）。
+(function(){
+  function fixH5pMenus(){
+    try{
+      document.querySelectorAll('.h5player-popup-wrap sl-dropdown').forEach(function(d){
+        if(d.getAttribute('placement') !== 'bottom-end'){
+          d.setAttribute('placement', 'bottom-end');
+        }
+      });
+    }catch(e){}
+  }
+  var pending = false;
+  new MutationObserver(function(){
+    if(pending) return;
+    pending = true;
+    requestAnimationFrame(function(){ pending = false; fixH5pMenus(); });
+  }).observe(document.documentElement, {childList:true, subtree:true});
+  document.addEventListener('DOMContentLoaded', fixH5pMenus);
+  fixH5pMenus();
+})();
 </script>
 </body>
 </html>
