@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.0.1
+// @version      1.1.0
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -99,6 +99,47 @@
     return b;
   }
 
+  function downloadVideo() {
+    var v = cur;
+    if (!v) return;
+    var src = v.currentSrc || v.src;
+    if (!src) { toast('找不到视频地址'); return; }
+    if (src.indexOf('blob:') === 0 || src.indexOf('data:') === 0) {
+      toast('该视频是加密流，无法直接下载');
+      return;
+    }
+    toast('开始下载…');
+    fetch(src).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      var type = r.headers.get('content-type') || '';
+      var name = guessName(src, type);
+      return r.blob().then(function (b) { saveBlob(b, name); });
+    }).catch(function () {
+      /* 跨域受限时退而求其次：新标签打开让用户另存 */
+      window.open(src, '_blank');
+      toast('已在新标签打开，右键视频另存为即可');
+    });
+  }
+
+  function guessName(src, type) {
+    try {
+      var u = new URL(src, location.href);
+      var p = decodeURIComponent(u.pathname).split('/').pop();
+      if (p && /\.[a-z0-9]{2,5}$/i.test(p)) return p;
+    } catch (e) {}
+    return '视频_' + Date.now() + (/mp4/i.test(type) ? '.mp4' : '.mp4');
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+    toast('已保存：' + name);
+  }
+
   function mSep() {
     var d = document.createElement('div');
     d.className = 'mvt-sep';
@@ -178,6 +219,14 @@
     }));
     fltBtn.appendChild(mFlt);
     bar.appendChild(fltBtn);
+
+    /* --- 下载 --- */
+    var dlBtn = mBtn('下载', false);
+    dlBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      downloadVideo();
+    });
+    bar.appendChild(dlBtn);
 
     /* --- 工具 --- */
     var toolBtn = mBtn('工具', true);
