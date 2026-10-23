@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.4.1
+// @version      1.4.2
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -124,7 +124,7 @@
     }
   }
 
-  /* 合成下载：捕获视频元素画面+声音，加速播放录制成单个文件 */
+  /* 合成下载：捕获视频元素画面+声音，原速播放录制成单个文件 */
   var mvtRecording = false;
   function mergeRecord(v) {
     if (mvtRecording) { toast('正在合成中，请稍候'); return; }
@@ -159,7 +159,6 @@
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = function () {
       mvtRecording = false;
-      v.removeEventListener('ratechange', keepRate);
       v.playbackRate = wasRate;
       v.muted = wasMuted;
       v.volume = wasVolume;
@@ -169,9 +168,6 @@
       if (b.size < 1000) { toast('合成失败：没录到内容'); return; }
       saveBlob(b, '合成_' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.webm');
     };
-    function keepRate() {
-      if (v.playbackRate < 8) { try { v.playbackRate = 8; } catch (e) {} }
-    }
     var dur = v.duration || 0;
     v.addEventListener('ended', onEnd, { once: true });
     function onEnd() {
@@ -181,11 +177,10 @@
     var iv = setInterval(function () {
       if (!mvtRecording) { clearInterval(iv); return; }
       if (dur > 0) {
-        toast('合成中 ' + Math.min(100, Math.round(v.currentTime / dur * 100)) + '%（8倍速播放，请勿关闭页面）');
+        toast('合成中 ' + Math.min(100, Math.round(v.currentTime / dur * 100)) + '%（原速录制，请勿关闭页面）');
       } else {
         toast('合成中…（请勿关闭页面）');
       }
-      keepRate();
     }, 1000);
     /* 安全上限：最多录 40 分钟 */
     setTimeout(function () { if (mvtRecording && rec.state !== 'inactive') { clearInterval(iv); try { rec.stop(); } catch (e) {} } }, 40 * 60 * 1000);
@@ -193,10 +188,8 @@
     v.muted = false;
     var pr = v.play();
     if (pr && pr.catch) pr.catch(function () {});
-    keepRate();
-    v.addEventListener('ratechange', keepRate);
     rec.start(1000);
-    toast(dur > 0 ? '开始合成，需约 ' + Math.ceil(dur / 8 / 60) + ' 分钟（8倍速）' : '开始合成…');
+    toast(dur > 0 ? '开始合成，需约 ' + Math.ceil(dur / 60) + ' 分钟（原速录制，请勿关闭页面）' : '开始合成…');
   }
   window.__mvtMerge = mergeRecord; /* 供测试/控制台手动调用 */
 
