@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.2.1
+// @version      1.4.0
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -14,10 +14,11 @@
 
   /* ================= 样式 ================= */
   var css = [
-    '.mvt-bar{position:fixed;z-index:2147483000;display:none;align-items:center;gap:2px;',
-    '  background:rgba(20,20,24,.92);border:1px solid rgba(255,255,255,.14);border-radius:8px;',
-    '  padding:4px 6px;box-shadow:0 4px 16px rgba(0,0,0,.4);font-size:13px;user-select:none;}',
-    '.mvt-bar.mvt-on{display:flex;}',
+    '.mvt-bar{position:fixed;top:0;left:40px;z-index:2147483000;display:flex;align-items:center;gap:2px;',
+    '  background:rgba(20,20,24,.92);border:1px solid rgba(255,255,255,.14);border-top:none;border-radius:0 0 8px 8px;',
+    '  padding:4px 6px;box-shadow:0 4px 16px rgba(0,0,0,.4);font-size:13px;user-select:none;',
+    '  transform:translateY(calc(-100% + 3px));transition:transform .22s ease;}',
+    '.mvt-bar.mvt-on{transform:translateY(0);}',
     '.mvt-btn{position:relative;color:#eee;background:transparent;border:none;border-radius:6px;',
     '  padding:5px 9px;cursor:pointer;font-size:13px;line-height:1;white-space:nowrap;font-family:inherit;}',
     '.mvt-btn:hover{background:rgba(255,255,255,.14);}',
@@ -363,41 +364,48 @@
     document.addEventListener('click', closeMenus);
 
     /* 鼠标离开工具栏后隐藏 */
-    bar.addEventListener('mouseenter', function () { clearTimeout(hideTimer); });
-    bar.addEventListener('mouseleave', scheduleHide);
+    bar.addEventListener('mouseenter', function () { clearTimeout(hideTimer); bar.classList.add('mvt-on'); });
+    bar.addEventListener('mouseleave', slideUpSoon);
 
     document.body.appendChild(bar);
   }
 
-  /* ================= 显隐与定位 ================= */
+  /* ================= 显隐与定位（顶边沿隐藏式） ================= */
   function showFor(video) {
     cur = video;
     if (!video.__mvt) { video.__mvt = newState(); }
+    updateRateBtn();
+  }
+
+  function isMenuOpen() {
+    return !!bar.querySelector('.mvt-btn.mvt-open');
+  }
+
+  function slideDown() {
     clearTimeout(hideTimer);
     bar.classList.add('mvt-on');
-    updateRateBtn();
     positionBar();
   }
 
-  function scheduleHide() {
+  function slideUpSoon() {
+    if (isMenuOpen()) return;
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () {
+      if (isMenuOpen()) return;
       closeMenus();
       bar.classList.remove('mvt-on');
-      cur = null;
-    }, 500);
+    }, 450);
   }
 
   function positionBar() {
-    if (!cur || !bar.classList.contains('mvt-on')) return;
-    var r = cur.getBoundingClientRect();
-    var top = Math.max(6, r.top + 8);
-    bar.style.top = top + 'px';
-    /* 让工具栏尽量贴视频右上角，且不出屏幕 */
-    var right = Math.min(window.innerWidth - r.right, window.innerWidth - bar.offsetWidth - 8);
-    var left = Math.max(8, Math.min(r.right - 8, window.innerWidth - 8) - bar.offsetWidth);
+    var left;
+    if (cur) {
+      var r = cur.getBoundingClientRect();
+      left = r.right - bar.offsetWidth - 8;
+    } else {
+      left = 40;
+    }
     bar.style.left = Math.max(8, Math.min(left, window.innerWidth - bar.offsetWidth - 8)) + 'px';
-    void right;
   }
 
   setInterval(positionBar, 250);
@@ -411,12 +419,11 @@
     if (bound.has(video)) return;
     if (!(video instanceof HTMLVideoElement)) return;
     var r = video.getBoundingClientRect();
-    /* 过滤小视频/广告位：面积太小的不管 */
-    if (r.width < 260 || r.height < 140) return;
+    /* 只过滤当时明显是小窗/广告的：优酷等站点初始 rect 可能为 0，不能按尺寸拒绝 */
+    if (r.width > 0 && (r.width < 260 || r.height < 140)) return;
     bound.add(video);
 
     video.addEventListener('mouseenter', function () { showFor(video); });
-    video.addEventListener('mouseleave', scheduleHide);
   }
 
   function scan() {
@@ -424,6 +431,53 @@
   }
 
   var mo = new MutationObserver(scan);
+
+  /* 全局鼠标检测：鼠标靠近页面顶边沿（工具栏常驻处）滑出工具栏；
+     光标落在视频矩形内则把工具栏对齐到该视频（优酷等遮挡层站点 mouseenter 收不到） */
+  var lastHitCheck = 0;
+  function onDocMove(e) {
+    var now = Date.now();
+    if (now - lastHitCheck < 100) return;
+    lastHitCheck = now;
+    var x = e.clientX, y = e.clientY;
+
+    /* 工具栏自身区域：保持展开 */
+    var br = bar.getBoundingClientRect();
+    if (x >= br.left - 4 && x <= br.right + 4 && y <= br.bottom + 8) {
+      clearTimeout(hideTimer);
+      if (!bar.classList.contains('mvt-on')) slideDown();
+      return;
+    }
+    /* 展开状态下，鼠标离顶边沿较近时保持；走远且不在工具栏上则收起 */
+    if (bar.classList.contains('mvt-on')) {
+      if (y <= 60) { clearTimeout(hideTimer); return; }
+      slideUpSoon();
+    }
+
+    /* 光标进入视频：记住该视频并对齐工具栏位置 */
+    var hit = null;
+    document.querySelectorAll('video').forEach(function (v) {
+      if (hit) return;
+      var r = v.getBoundingClientRect();
+      if (r.width < 260 || r.height < 140) return;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) hit = v;
+    });
+    if (hit && cur !== hit) {
+      showFor(hit);
+      if (bar.classList.contains('mvt-on')) positionBar();
+    }
+  }
+
+  /* 全屏支持：全屏时把工具栏挂进全屏元素，退出时归还 body */
+  function onFsChange() {
+    var fs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fs && bar.parentElement !== fs) {
+      fs.appendChild(bar);
+    } else if (!fs && bar.parentElement !== document.body) {
+      document.body.appendChild(bar);
+    }
+  }
+
   function start() {
     toastEl = document.createElement('div');
     toastEl.className = 'mvt-toast';
@@ -432,6 +486,9 @@
     scan();
     mo.observe(document.documentElement, { childList: true, subtree: true });
     setInterval(scan, 2000);
+    document.addEventListener('mousemove', onDocMove, true);
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
   }
 
   if (document.body) {
