@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.5.4
+// @version      1.5.5
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。下载推荐用本机 yt-dlp 脚本（① 当前页 / ② 任意链接），兜底为分片合并与边播边录。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -361,7 +361,7 @@
       'set "YTDLP=%TOOLS%\\yt-dlp.exe"',
       'if not exist "%YTDLP%" (',
       '  echo [mvt] 首次运行：下载 yt-dlp ...',
-      '  curl.exe -L -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
+      '  curl.exe -L --noproxy "*" -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
       '  del /f /q "%YTDLP%:Zone.Identifier" 2>nul',
       ')',
       'if not exist "%YTDLP%" (',
@@ -373,7 +373,7 @@
       'if not exist "%FFDIR%\\ffmpeg.exe" (',
       '  echo [mvt] 首次运行：下载 ffmpeg（约 70MB，请稍候）...',
       '  set "FFZIP=%TOOLS%\\ffmpeg.zip"',
-      '  curl.exe -L -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
+      '  curl.exe -L --noproxy "*" -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
       '  if exist "!FFZIP!" (',
       '    echo [mvt] 解压 ffmpeg ...',
       '    if not exist "%TOOLS%\\ffmpeg_extract" mkdir "%TOOLS%\\ffmpeg_extract"',
@@ -452,7 +452,7 @@
       'set "YTDLP=%TOOLS%\\yt-dlp.exe"',
       'if not exist "%YTDLP%" (',
       '  echo [mvt] 首次运行：下载 yt-dlp ...',
-      '  curl.exe -L -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
+      '  curl.exe -L --noproxy "*" -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
       '  del /f /q "%YTDLP%:Zone.Identifier" 2>nul',
       ')',
       'if not exist "%YTDLP%" (',
@@ -464,7 +464,7 @@
       'if not exist "%FFDIR%\\ffmpeg.exe" (',
       '  echo [mvt] 首次运行：下载 ffmpeg（约 70MB，请稍候）...',
       '  set "FFZIP=%TOOLS%\\ffmpeg.zip"',
-      '  curl.exe -L -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
+      '  curl.exe -L --noproxy "*" -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
       '  if exist "!FFZIP!" (',
       '    echo [mvt] 解压 ffmpeg ...',
       '    if not exist "%TOOLS%\\ffmpeg_extract" mkdir "%TOOLS%\\ffmpeg_extract"',
