@@ -7,6 +7,8 @@
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
+// @updateURL    https://whxclp.github.io/yinbox/my-video-toolkit.user.js
+// @downloadURL  https://whxclp.github.io/yinbox/my-video-toolkit.user.js
 // ==/UserScript==
 
 (function () {
