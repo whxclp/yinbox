@@ -1,0 +1,14 @@
+{
+  "name": "我的视频工具箱",
+  "description": "自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。下载推荐用本机yt-dlp脚本（①当前页/②任意链接），兜底为分片合并与边播边录。菜单固定向左展开，绝不超出屏幕右侧。",
+  "version": "1.5.5",
+  "author": "whxclp",
+  "update_url": "https://whxclp.github.io/yinbox/my-video-toolkit.user.js",
+  "download_url": "https://whxclp.github.io/yinbox/my-video-toolkit.user.js",
+  "home_page_url": "https://github.com/whxclp/yinbox",
+  "icons": {
+    "16": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%234ec98a'/%3E%3Ctext x='8' y='11' text-anchor='middle' font-size='10' fill='white'%3EV%3C/text%3E%3C/svg%3E",
+    "48": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='22' fill='%234ec98a'/%3E%3Ctext x='24' y='32' text-anchor='middle' font-size='28' fill='white' font-weight='bold'%3EV%3C/text%3E%3C/svg%3E",
+    "128": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Ccircle cx='64' cy='64' r='60' fill='%234ec98a'/%3E%3Ctext x='64' y='84' text-anchor='middle' font-size='72' fill='white' font-weight='bold'%3EV%3C/text%3E%3C/svg%3E"
+  }
+}
