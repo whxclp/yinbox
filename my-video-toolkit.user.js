@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.5.1
+// @version      1.5.2
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。下载推荐用本机 yt-dlp 脚本（① 当前页 / ② 任意链接），兜底为分片合并与边播边录。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -347,9 +347,86 @@
           ' 个，占用 ' + Math.round(CAP.bytes / 1048576) + ' MB' + (CAP.overflow ? '（已超限）' : ''), 5000);
   }
 
+  /* 生成「自举」下载脚本：首次运行自动把 yt-dlp.exe 与 ffmpeg 下载到
+   * %LOCALAPPDATA%\mvt\bin，不依赖本机 Python / WinGet，重装系统后双击即用。
+   * bakedUrl 非空 => 把链接烤进脚本；为空 => 运行时粘贴/拖放链接。 */
+  function buildYtDlpBat(bakedUrl) {
+    var L = [
+      '@echo off',
+      'chcp 65001 >nul',
+      'setlocal EnableDelayedExpansion',
+      '',
+      'set "TOOLS=%LOCALAPPDATA%\\mvt\\bin"',
+      'if not exist "%TOOLS%" mkdir "%TOOLS%" >nul 2>nul',
+      'set "YTDLP=%TOOLS%\\yt-dlp.exe"',
+      'if not exist "%YTDLP%" (',
+      '  echo [mvt] 首次运行：下载 yt-dlp ...',
+      '  curl.exe -L -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
+      '  del /f /q "%YTDLP%:Zone.Identifier" 2>nul',
+      ')',
+      'if not exist "%YTDLP%" (',
+      '  echo [mvt] yt-dlp 下载失败，请检查网络后重试。',
+      '  pause & exit /b 1',
+      ')',
+      '',
+      'set "FFDIR=%TOOLS%\\ffmpeg\\bin"',
+      'if not exist "%FFDIR%\\ffmpeg.exe" (',
+      '  echo [mvt] 首次运行：下载 ffmpeg（约 70MB，请稍候）...',
+      '  set "FFZIP=%TOOLS%\\ffmpeg.zip"',
+      '  curl.exe -L -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
+      '  if exist "!FFZIP!" (',
+      '    echo [mvt] 解压 ffmpeg ...',
+      '    if not exist "%TOOLS%\\ffmpeg_extract" mkdir "%TOOLS%\\ffmpeg_extract"',
+      '    tar -xf "!FFZIP!" -C "%TOOLS%\\ffmpeg_extract"',
+      '    for /d %%D in ("%TOOLS%\\ffmpeg_extract\\ffmpeg-*") do (',
+      '      if exist "%%D\\bin\\ffmpeg.exe" xcopy /E /Y "%%D\\*" "%TOOLS%\\ffmpeg\\" >nul',
+      '    )',
+      '    rd /s /q "%TOOLS%\\ffmpeg_extract" >nul 2>nul',
+      '    del /f /q "!FFZIP!" >nul 2>nul',
+      '  )',
+      ')',
+      'if not exist "%FFDIR%\\ffmpeg.exe" (',
+      '  echo [mvt] ffmpeg 下载/解压失败，请检查网络后重试。',
+      '  pause & exit /b 1',
+      ')',
+      '',
+      'set "OUTDIR=%USERPROFILE%\\Desktop\\视频下载"',
+      'if not exist "%OUTDIR%" mkdir "%OUTDIR%" >nul 2>nul',
+      ''
+    ];
+    if (bakedUrl) {
+      L.push('set "URL=' + bakedUrl + '"');
+      L.push('if "%URL%"=="" (');
+      L.push('  echo  [mvt] 链接为空。');
+      L.push('  pause & exit /b 1');
+      L.push(')');
+    } else {
+      L.push('set "URL=%~1"');
+      L.push('if "%URL%"=="" (');
+      L.push('  echo.');
+      L.push('  echo  [mvt] 粘贴视频链接（支持 B站/YouTube 等 yt-dlp 站点）后回车：');
+      L.push('  set /p "URL=> "');
+      L.push(')');
+      L.push('if "%URL%"=="" (');
+      L.push('  echo  [mvt] 未输入链接。');
+      L.push('  pause & exit /b 1');
+      L.push(')');
+    }
+    L.push('');
+    L.push('echo.');
+    L.push('echo  [mvt] 下载中 ... 输出目录：%OUTDIR%');
+    L.push('echo.');
+    L.push('"%YTDLP%" --no-playlist -f "bv*+ba/b" --merge-output-format mp4 --ffmpeg-location "%FFDIR%" -P "%OUTDIR%" --no-mtime "%URL%"');
+    L.push('');
+    L.push('echo.');
+    L.push('if errorlevel 1 ( echo  [mvt] 下载失败，见上方信息。 ) else ( echo  [mvt] 完成，文件在：%OUTDIR% )');
+    L.push('pause');
+    return L.join('\r\n') + '\r\n';
+  }
+
   /* ================= 下载模式四：生成本地下载脚本（yt-dlp，最稳） =================
-   * 浏览器沙箱里不能直接跑 .bat，所以这里把「当前视频 URL」烤进一个 .bat，
-   * 让用户双击即可用本机 yt-dlp 下载并 ffmpeg 合并。等价于桌面那个 视频下载合并.bat。 */
+   * 把「当前视频 URL」烤进一个自举 .bat：双击即用，首次运行自动补齐 yt-dlp/ffmpeg，
+   * 不依赖本机 Python / WinGet，重装系统后也能用。等价桌面那个 视频下载合并.bat。 */
   function genDownBat() {
     var url = String(location.href || '').split('#')[0];
     if (!/bilibili\.com/i.test(url) && cur) {
@@ -358,71 +435,26 @@
     }
     if (!url) { toast('拿不到当前视频地址', 3000); return; }
 
-    var py  = 'C:\\Users\\whx\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe';
-    var ff  = 'C:\\Users\\whx\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin';
-    var out = '%USERPROFILE%\\Desktop\\视频下载';
-
-    var bat = [
-      '@echo off',
-      'chcp 65001 >nul',
-      'setlocal',
-      'set "PY=' + py + '"',
-      'set "FFDIR=' + ff + '"',
-      'set "OUTDIR=' + out + '"',
-      'if not exist "%OUTDIR%" mkdir "%OUTDIR%"',
-      '',
-      'echo Downloading: "' + url + '"',
-      '',
-      '"%PY%" -m yt_dlp --no-playlist -f "bv*+ba/b" --merge-output-format mp4',
-      '  --ffmpeg-location "%FFDIR%" -P "%OUTDIR%" "' + url + '"',
-      '',
-      'if errorlevel 1 ( echo [FAILED] ) else ( echo [DONE] files in "%OUTDIR%" )',
-      'pause'
-    ].join('\r\n') + '\r\n';
-
+    var bat = buildYtDlpBat(url);
     saveBlob(new Blob([bat], { type: 'application/octet-stream' }), '下载本视频.bat');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(bat).then(
-        function () { toast('已生成「下载本视频.bat」并复制命令，双击即可下载合并', 6000); },
-        function () { toast('已生成「下载本视频.bat」，双击即可下载合并', 4000); }
+        function () { toast('已生成「下载本视频.bat」并复制命令，双击即自动下载合并（首次会先拉取依赖）', 6000); },
+        function () { toast('已生成「下载本视频.bat」，双击即自动下载合并', 4000); }
       );
     } else {
-      toast('已生成「下载本视频.bat」，双击即可下载合并', 4000);
+      toast('已生成「下载本视频.bat」，双击即自动下载合并', 4000);
     }
   }
 
   /* ================= 下载模式五：生成「通用」下载脚本（运行后粘贴任意链接） =================
-   * 等价桌面那个 视频下载合并.bat：双击生成的 bat 后会让你粘贴任意 yt-dlp 支持的链接，
-   * 不限 B站、不限是否在视频页。这是把桌面 bat 的能力收进插件。 */
+   * 等价桌面那个 视频下载合并.bat，但更稳：自举补齐 yt-dlp/ffmpeg，不限 B站、不限是否在视频页。 */
   function genDownBatGeneric() {
-    var py  = 'C:\\Users\\whx\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe';
-    var ff  = 'C:\\Users\\whx\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.WinGet.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin';
-    var out = '%USERPROFILE%\\Desktop\\视频下载';
-
-    var bat = [
-      '@echo off',
-      'chcp 65001 >nul',
-      'setlocal',
-      'set "PY=' + py + '"',
-      'set "FFDIR=' + ff + '"',
-      'set "OUTDIR=' + out + '"',
-      'if not exist "%OUTDIR%" mkdir "%OUTDIR%"',
-      '',
-      'echo Paste the video URL and press Enter:',
-      'set /p "URL=> "',
-      'if "%URL%"=="" goto :eof',
-      '',
-      '"%PY%" -m yt_dlp --no-playlist -f "bv*+ba/b" --merge-output-format mp4',
-      '  --ffmpeg-location "%FFDIR%" -P "%OUTDIR%" "%URL%"',
-      '',
-      'if errorlevel 1 ( echo [FAILED] ) else ( echo [DONE] files in "%OUTDIR%" )',
-      'pause'
-    ].join('\r\n') + '\r\n';
-
+    var bat = buildYtDlpBat('');
     saveBlob(new Blob([bat], { type: 'application/octet-stream' }), '视频下载合并.bat');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(bat).then(
-        function () { toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接），命令已复制', 6000); },
+        function () { toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接，首次自动拉依赖），命令已复制', 6000); },
         function () { toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接）', 4000); }
       );
     } else {
