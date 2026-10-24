@@ -1,16 +1,141 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.4.2
-// @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。菜单固定向左展开，绝不超出屏幕右侧。
+// @version      1.5.1
+// @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。下载推荐用本机 yt-dlp 脚本（① 当前页 / ② 任意链接），兜底为分片合并与边播边录。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  /* ============================================================
+   * 分片捕获：必须在页面脚本执行前挂钩，所以 @run-at 是 document-start
+   * 思路：拦下 fetch / XHR，把视频音频分片的二进制先攒起来，
+   *      用户点「分片合并下载」时按序号排序拼接 —— 即「先下载完，再合并」。
+   * ============================================================ */
+  var CAP = {
+    on: true,
+    seq: 0,
+    items: [],            // {seq, url, ct, kind, idx, buf}
+    bytes: 0,
+    maxBytes: 1200 * 1024 * 1024,   // 缓存上限 1.2GB，超了只记 URL 不再占内存
+    overflow: false
+  };
+
+  /* B站 dash：文件名里的 5 位 30xxx 是轨 ID（<30200 视频、>=30200 音频）；
+     其余站点看 content-type；实在判不出来归 'unk'，绝不乱猜成 video */
+  function mediaKind(u, ct) {
+    var s = String(u || '');
+    var m = s.match(/(\d{5})\.m4s(\?|$)/i);
+    if (m) { return parseInt(m[1], 10) >= 30200 ? 'audio' : 'video'; }
+    var c = String(ct || '').toLowerCase();
+    if (/^audio\//.test(c)) return 'audio';
+    if (/^video\//.test(c)) return 'video';
+    if (/\.(m4s|ts)(\?|$)/i.test(s)) return 'unk';
+    return null;
+  }
+
+  /* 分片序号：range 参数 > 文件名数字；5 位 30xxx 是轨 ID 不是序号，要排除 */
+  function segIndex(u) {
+    var s = String(u || '');
+    if (/(\d{5})\.m4s(\?|$)/i.test(s)) return -1;
+    var m = s.match(/(\d+)\.(?:m4s|ts)(\?|$)/i);
+    if (m) return parseInt(m[1], 10);
+    m = s.match(/[?&](?:range|start|byte)[=_](\d+)/i);
+    if (m) return parseInt(m[1], 10);
+    return -1;
+  }
+
+  /* 从 Content-Range 取起始字节；B站 dash 是按 range 分段加载同一个大 m4s，
+     所以去重键必须是 url + 起始偏移，只按 url 去重会把后到的片段全丢掉 */
+  function rangeStart(r) {
+    try {
+      var cr = (r && r.headers && r.headers.get) ? r.headers.get('content-range') : '';
+      var m = String(cr || '').match(/bytes\s+(\d+)-/i);
+      if (m) return parseInt(m[1], 10);
+    } catch (e) {}
+    return -1;
+  }
+
+  function addSeg(u, ct, buf, start) {
+    var k = mediaKind(u, ct);
+    if (!k) return;
+    var st = (typeof start === 'number') ? start : -1;
+    for (var i = 0; i < CAP.items.length; i++) {
+      var it = CAP.items[i];
+      if (it.url === u && it.start === st) return;      // 去重：同 URL 同偏移
+    }
+    CAP.items.push({
+      seq: CAP.seq++, url: u, ct: ct || '', kind: k,
+      idx: segIndex(u), buf: buf || null, start: st
+    });
+    if (buf) CAP.bytes += buf.byteLength || 0;
+  }
+
+  function capFetch(url, p) {
+    if (!p || typeof p.then !== 'function') return p;
+    return p.then(function (r) {
+      try {
+        var ct = (r.headers && r.headers.get) ? (r.headers.get('content-type') || '') : '';
+        if (!mediaKind(url, ct)) return r;
+        var st = rangeStart(r);
+        if (CAP.bytes >= CAP.maxBytes) { CAP.overflow = true; addSeg(url, ct, null, st); return r; }
+        var c = r.clone();
+        c.arrayBuffer().then(function (b) { addSeg(url, ct, b, st); })
+                        .catch(function () { addSeg(url, ct, null, st); });
+      } catch (e) {}
+      return r;
+    }, function (e) { throw e; });
+  }
+
+  function hookNetwork() {
+    /* --- fetch --- */
+    var of = window.fetch;
+    if (typeof of === 'function') {
+      window.fetch = function (input, init) {
+        var url = (typeof input === 'string') ? input
+               : (input && input.url) ? input.url : '';
+        var p;
+        try { p = of.apply(this, arguments); } catch (e) { throw e; }
+        return CAP.on ? capFetch(url, p) : p;
+      };
+    }
+    /* --- XHR：response 多为 arraybuffer，直接取；否则只记 URL --- */
+    var X = window.XMLHttpRequest;
+    if (X && X.prototype && X.prototype.open) {
+      var P = X.prototype;
+      var oo = P.open, os = P.send;
+      P.open = function (m, u) { this.__mvtU = u; return oo.apply(this, arguments); };
+      P.send = function () {
+        var self = this;
+        if (CAP.on) {
+          this.addEventListener('load', function () {
+            try {
+              var ct = (self.getResponseHeader && self.getResponseHeader('content-type')) || '';
+              var u = self.__mvtU || '';
+              if (!mediaKind(u, ct)) return;
+              var buf = null;
+              try {
+                if (self.responseType === 'arraybuffer' && self.response &&
+                    self.response.byteLength) buf = self.response;
+              } catch (e) {}
+              var cr = '';
+              try { cr = self.getResponseHeader('content-range') || ''; } catch (e) {}
+              var mm = String(cr).match(/bytes\s+(\d+)-/i);
+              addSeg(u, ct, buf, mm ? parseInt(mm[1], 10) : -1);
+            } catch (e) {}
+          });
+        }
+        return os.apply(this, arguments);
+      };
+    }
+  }
+  hookNetwork();
+  window.__mvtCap = CAP;   /* 控制台可查看分片情况 */
 
   /* ================= 样式 ================= */
   var css = [
@@ -23,7 +148,7 @@
     '  padding:5px 9px;cursor:pointer;font-size:13px;line-height:1;white-space:nowrap;font-family:inherit;}',
     '.mvt-btn:hover{background:rgba(255,255,255,.14);}',
     '.mvt-btn.mvt-has-menu::after{content:" ▾";opacity:.6;font-size:10px;}',
-    '.mvt-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:132px;',
+    '.mvt-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:150px;',
     '  background:rgba(28,28,32,.97);border:1px solid rgba(255,255,255,.16);border-radius:8px;',
     '  padding:5px;display:none;flex-direction:column;gap:1px;box-shadow:0 6px 20px rgba(0,0,0,.5);}',
     '.mvt-btn.mvt-open .mvt-menu{display:flex;}',
@@ -34,16 +159,15 @@
     '.mvt-menu .mvt-cur{color:#8fd3ff;font-weight:600;}',
     '.mvt-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483001;',
     '  background:rgba(20,20,24,.95);color:#fff;padding:9px 18px;border-radius:8px;font-size:14px;',
-    '  display:none;box-shadow:0 4px 16px rgba(0,0,0,.5);max-width:80vw;}',
-    '.mvt-logo{color:#9fb4c8;font-size:11px;padding:0 4px;cursor:default;letter-spacing:.5px;}'
+    '  display:none;box-shadow:0 4px 16px rgba(0,0,0,.5);max-width:86vw;line-height:1.5;}',
+    '.mvt-logo{color:#9fb4c8;font-size:11px;padding:0 4px;cursor:default;letter-spacing:.5px;}',
+    '.mvt-ver{color:#4ec98a;font-size:10px;padding:0 4px 0 0;cursor:default;letter-spacing:.3px;opacity:.95;}',
+    '.mvt-stop{color:#fff;background:#d9483b;border-radius:6px;padding:5px 9px;font-size:12px;line-height:1;}',
+    '.mvt-stop:hover{background:#c33a2e;}'
   ].join('');
 
-  var styleEl = document.createElement('style');
-  styleEl.textContent = css;
-  document.head.appendChild(styleEl);
-
   /* ================= 状态 ================= */
-  var cur = null;          // 当前控制的 video
+  var cur = null;
   var hideTimer = null;
   var bar, toastEl, toastTimer = null;
 
@@ -53,11 +177,22 @@
   }
 
   /* ================= 工具函数 ================= */
-  function toast(msg) {
+  function toast(msg, ms) {
     toastEl.textContent = msg;
     toastEl.style.display = 'block';
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.style.display = 'none'; }, 1800);
+    toastTimer = setTimeout(function () { toastEl.style.display = 'none'; }, ms || 2600);
+  }
+
+  function safeName() {
+    var t = (document.title || '').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 50);
+    return t || ('视频_' + Date.now());
+  }
+
+  function stamp() {
+    var d = new Date(), p = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' +
+           p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
   }
 
   function apply(v) {
@@ -69,17 +204,374 @@
       ' scale(' + s.zoom + ')' + (s.flipH ? ' scaleX(-1)' : '') + (s.flipV ? ' scaleY(-1)' : '');
   }
 
-  function setRate(v, r) {
-    v.__mvt.rate = r;
-    v.playbackRate = r;
-    toast('倍速：' + r + 'x');
-    updateRateBtn();
+  /* ================= 下载：入口 ================= */
+  function downloadVideo() {
+    var v = cur;
+    if (!v) return;
+    var src = v.currentSrc || v.src;
+    if (src && src.indexOf('http') === 0) {
+      toast('开始下载原文件…');
+      fetch(src, { credentials: 'include' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var type = r.headers.get('content-type') || '';
+        return r.blob().then(function (b) { saveBlob(b, guessName(src, type)); });
+      }).catch(function (e) {
+        if (CAP.items.length) {
+          toast('直链下载失败（多为跨域拦截），已捕获 ' + CAP.items.length + ' 个分片，可用「分片合并下载」', 4000);
+        } else {
+          toast('直链下载失败：' + e.message + '，可试「边播边录合成」', 4000);
+        }
+      });
+    } else if (src && (src.indexOf('blob:') === 0 || src.indexOf('data:') === 0)) {
+      if (CAP.items.length >= 2) {
+        toast('检测到 MSE 流，已捕获 ' + CAP.items.length + ' 个分片，建议用「分片合并下载」', 4000);
+      } else {
+        mergeRecord(v);
+      }
+    } else {
+      toast('找不到视频地址');
+    }
   }
 
-  function updateRateBtn() {
-    if (!cur) return;
-    var label = rateBtn.querySelector('.mvt-label');
-    if (label) label.textContent = '倍速 ' + cur.playbackRate + 'x';
+  /* ================= 下载模式二：分片合并（先下完再拼） ================= */
+  function fetchOne(it) {
+    if (it.buf) return Promise.resolve(it.buf);
+    return fetch(it.url, { credentials: 'include' }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.arrayBuffer();
+    });
+  }
+
+  /* 同一个 URL 被 range 切成多段时：
+     片段齐全且字节连续 -> 直接用缓存；否则整段重新 fetch 一次（不带 range），
+     免得拼出一个带空洞、播放到一半就断的文件 */
+  function normalize(list) {
+    var gmap = {}, order = [];
+    list.forEach(function (it) {
+      if (!gmap[it.url]) { gmap[it.url] = []; order.push(it.url); }
+      gmap[it.url].push(it);
+    });
+    var out = [];
+    order.forEach(function (u) {
+      var g = gmap[u].slice().sort(function (a, b) {
+        return (a.start < 0 ? 0 : a.start) - (b.start < 0 ? 0 : b.start);
+      });
+      if (g.length === 1) { out.push(g[0]); return; }
+      var ok = true, expect = 0;
+      for (var i = 0; i < g.length; i++) {
+        if (!g[i].buf || g[i].start < 0 || g[i].start !== expect) { ok = false; break; }
+        expect += g[i].buf.byteLength;
+      }
+      if (ok) {
+        g.forEach(function (x) { out.push(x); });
+      } else {
+        out.push({ seq: g[0].seq, url: u, ct: g[0].ct, kind: g[0].kind,
+                   idx: g[0].idx, buf: null, start: -1, whole: true });
+      }
+    });
+    out.sort(function (a, b) {
+      if (a.idx >= 0 && b.idx >= 0 && a.idx !== b.idx) return a.idx - b.idx;
+      return a.seq - b.seq;
+    });
+    return out;
+  }
+
+  function buildTrack(kind, raw, done) {
+    var list = normalize(raw);
+    var out = [], i = 0, miss = 0;
+    function step() {
+      if (segAbort) {   /* 用户点了「停止」：把已下到的部分先存下来 */
+        done(new Blob(out, { type: kind === 'audio' ? 'audio/mp4' : 'video/mp4' }), miss);
+        return;
+      }
+      if (i >= list.length) {
+        done(new Blob(out, { type: kind === 'audio' ? 'audio/mp4' : 'video/mp4' }), miss);
+        return;
+      }
+      var it = list[i++];
+      if (i % 10 === 0 || i === list.length) toast('正在取分片 ' + i + '/' + list.length);
+      fetchOne(it).then(function (b) {
+        if (segAbort) { step(); return; }
+        out.push(b); step();
+      }).catch(function () { if (segAbort) { step(); return; } miss++; step(); });
+    }
+    step();
+  }
+
+  function segDownload() {
+    if (!CAP.items.length) {
+      toast('还没捕获到分片。请刷新页面、让视频正常播放一段时间后再试', 4000);
+      return;
+    }
+    var kinds = {};
+    CAP.items.forEach(function (it) { (kinds[it.kind] = kinds[it.kind] || []).push(it); });
+    var keys = Object.keys(kinds);
+    var base = safeName() + '_' + stamp();
+    var doneCount = 0;
+    segRunning = true; segAbort = false; showStop(true);
+
+    keys.forEach(function (k) {
+      var list = kinds[k];
+      buildTrack(k, list, function (blob, miss) {
+        doneCount++;
+        var ext = (k === 'audio') ? 'm4a' : (k === 'unk') ? 'bin' : 'mp4';
+        saveBlob(blob, base + '_' + k + '.' + ext);
+        if (miss) toast('警告：' + k + ' 轨有 ' + miss + ' 个分片没取到，文件可能不完整', 5000);
+
+        if (doneCount === keys.length) {
+          segRunning = false; segAbort = false; showStop(false);
+          if (keys.length === 2) {
+            setTimeout(function () {
+              toast('已分别存下视频轨和音频轨。用 ffmpeg 合成完整文件：\n' +
+                    'ffmpeg -i ' + base + '_video.mp4 -i ' + base + '_audio.m4a -c copy out.mp4', 9000);
+            }, 1200);
+          }
+        }
+      });
+    });
+
+    if (CAP.overflow) {
+      toast('注意：分片体积超过缓存上限，部分需重新联网拉取', 4000);
+    }
+  }
+
+  function reportSeg() {
+    var n = CAP.items.length, v = 0, a = 0, cached = 0;
+    CAP.items.forEach(function (it) {
+      if (it.kind === 'video') v++; else a++;
+      if (it.buf) cached++;
+    });
+    toast('已捕获分片 ' + n + ' 个（视频 ' + v + ' / 音频 ' + a + '），已缓存 ' + cached +
+          ' 个，占用 ' + Math.round(CAP.bytes / 1048576) + ' MB' + (CAP.overflow ? '（已超限）' : ''), 5000);
+  }
+
+  /* ================= 下载模式四：生成本地下载脚本（yt-dlp，最稳） =================
+   * 浏览器沙箱里不能直接跑 .bat，所以这里把「当前视频 URL」烤进一个 .bat，
+   * 让用户双击即可用本机 yt-dlp 下载并 ffmpeg 合并。等价于桌面那个 视频下载合并.bat。 */
+  function genDownBat() {
+    var url = String(location.href || '').split('#')[0];
+    if (!/bilibili\.com/i.test(url) && cur) {
+      var s = cur.currentSrc || cur.src || '';
+      if (s && s.indexOf('http') === 0) url = s;
+    }
+    if (!url) { toast('拿不到当前视频地址', 3000); return; }
+
+    var py  = 'C:\\Users\\whx\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe';
+    var ff  = 'C:\\Users\\whx\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin';
+    var out = '%USERPROFILE%\\Desktop\\视频下载';
+
+    var bat = [
+      '@echo off',
+      'chcp 65001 >nul',
+      'setlocal',
+      'set "PY=' + py + '"',
+      'set "FFDIR=' + ff + '"',
+      'set "OUTDIR=' + out + '"',
+      'if not exist "%OUTDIR%" mkdir "%OUTDIR%"',
+      '',
+      'echo Downloading: "' + url + '"',
+      '',
+      '"%PY%" -m yt_dlp --no-playlist -f "bv*+ba/b" --merge-output-format mp4',
+      '  --ffmpeg-location "%FFDIR%" -P "%OUTDIR%" "' + url + '"',
+      '',
+      'if errorlevel 1 ( echo [FAILED] ) else ( echo [DONE] files in "%OUTDIR%" )',
+      'pause'
+    ].join('\r\n') + '\r\n';
+
+    saveBlob(new Blob([bat], { type: 'application/octet-stream' }), '下载本视频.bat');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(bat).then(
+        function () { toast('已生成「下载本视频.bat」并复制命令，双击即可下载合并', 6000); },
+        function () { toast('已生成「下载本视频.bat」，双击即可下载合并', 4000); }
+      );
+    } else {
+      toast('已生成「下载本视频.bat」，双击即可下载合并', 4000);
+    }
+  }
+
+  /* ================= 下载模式五：生成「通用」下载脚本（运行后粘贴任意链接） =================
+   * 等价桌面那个 视频下载合并.bat：双击生成的 bat 后会让你粘贴任意 yt-dlp 支持的链接，
+   * 不限 B站、不限是否在视频页。这是把桌面 bat 的能力收进插件。 */
+  function genDownBatGeneric() {
+    var py  = 'C:\\Users\\whx\\.workbuddy\\binaries\\python\\envs\\default\\Scripts\\python.exe';
+    var ff  = 'C:\\Users\\whx\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.WinGet.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin';
+    var out = '%USERPROFILE%\\Desktop\\视频下载';
+
+    var bat = [
+      '@echo off',
+      'chcp 65001 >nul',
+      'setlocal',
+      'set "PY=' + py + '"',
+      'set "FFDIR=' + ff + '"',
+      'set "OUTDIR=' + out + '"',
+      'if not exist "%OUTDIR%" mkdir "%OUTDIR%"',
+      '',
+      'echo Paste the video URL and press Enter:',
+      'set /p "URL=> "',
+      'if "%URL%"=="" goto :eof',
+      '',
+      '"%PY%" -m yt_dlp --no-playlist -f "bv*+ba/b" --merge-output-format mp4',
+      '  --ffmpeg-location "%FFDIR%" -P "%OUTDIR%" "%URL%"',
+      '',
+      'if errorlevel 1 ( echo [FAILED] ) else ( echo [DONE] files in "%OUTDIR%" )',
+      'pause'
+    ].join('\r\n') + '\r\n';
+
+    saveBlob(new Blob([bat], { type: 'application/octet-stream' }), '视频下载合并.bat');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(bat).then(
+        function () { toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接），命令已复制', 6000); },
+        function () { toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接）', 4000); }
+      );
+    } else {
+      toast('已生成「视频下载合并.bat」（通用版，运行后粘贴任意链接）', 4000);
+    }
+  }
+
+  /* ================= 下载模式三：边播边录（兜底，已修多个坑） ================= */
+  var mvtRecording = false;
+  var segRunning = false, segAbort = false;   /* 分片下载进行中 / 用户取消 */
+  var mvtStopFn = null;                       /* 录制进行时的停止回调 */
+  var stopBtn = null;                         /* 工具栏上的「停止」按钮 */
+
+  function showStop(show) {
+    if (stopBtn) stopBtn.style.display = show ? '' : 'none';
+  }
+  function mergeRecord(v) {
+    if (!v) return;
+    if (mvtRecording) { toast('正在合成中，请稍候'); return; }
+    if (!window.MediaRecorder) { toast('浏览器不支持录制合成'); return; }
+
+    var stream;
+    try {
+      stream = v.captureStream ? v.captureStream()
+             : (v.mozCaptureStream ? v.mozCaptureStream() : null);
+    } catch (e) { toast('该视频受保护，无法捕获合成'); return; }
+    if (!stream || !stream.getVideoTracks().length) { toast('无法捕获视频流，无法合成'); return; }
+
+    var mime = '';
+    ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].forEach(function (t) {
+      if (!mime && window.MediaRecorder.isTypeSupported(t)) mime = t;
+    });
+    var rec;
+    try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+    catch (e) { toast('录制器启动失败'); return; }
+
+    mvtRecording = true;
+    var chunks = [];
+    var wasRate = v.playbackRate, wasMuted = v.muted, wasVol = v.volume, wasLoop = v.loop;
+    var stopped = false, iv = null, hardStop = null, visFn = null;
+
+    function cleanup() {
+      mvtRecording = false;
+      mvtStopFn = null;
+      showStop(false);
+      clearInterval(iv); clearTimeout(hardStop);
+      v.playbackRate = wasRate; v.muted = wasMuted; v.volume = wasVol; v.loop = wasLoop;
+      if (visFn) document.removeEventListener('visibilitychange', visFn);
+      /* 释放捕获流，否则元素声音可能被劫持变哑 */
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    }
+
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onerror = function (e) {
+      toast('录制出错：' + ((e.error && e.error.name) || '未知'), 4000);
+      finish();
+    };
+
+    function finish() {
+      if (stopped) return;
+      stopped = true;
+      try { if (rec.state !== 'inactive') rec.stop(); } catch (e) {}
+      try { v.pause(); } catch (e) {}   /* 停止即停播，不再让视频空转 */
+    }
+
+    rec.onstop = function () {
+      cleanup();
+      var b = new Blob(chunks, { type: 'video/webm' });
+      if (b.size < 1000) { toast('合成失败：没录到内容'); return; }
+      saveBlob(b, safeName() + '_合成_' + stamp() + '.webm');
+      toast('合成完成（' + Math.round(b.size / 1048576) + ' MB）', 4000);
+    };
+
+    var dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 0;
+
+    v.addEventListener('ended', function () { finish(); }, { once: true });
+
+    /* 切后台会被浏览器降频，直接导致丢帧 —— 明确警告 */
+    visFn = function () {
+      if (document.hidden) toast('⚠ 页面切到后台会导致录制丢帧！请保持本页面在前台', 5000);
+    };
+    document.addEventListener('visibilitychange', visFn);
+
+    function begin() {
+      try { if (v.currentTime > 0.5) v.currentTime = 0; } catch (e) {}
+      /* 关键修复：必须强制原速。倍速播放会让流"快进"，录出来就缺内容 */
+      v.playbackRate = 1;
+      v.loop = false;
+      v.muted = false;
+      if (v.volume < 0.05) v.volume = 1;
+      var pr = v.play();
+      if (pr && pr.catch) pr.catch(function () { toast('自动播放被拦截，请手动点播放'); });
+      try { rec.start(1000); } catch (e) { toast('录制启动失败'); cleanup(); return; }
+      mvtStopFn = finish; showStop(true);
+
+      var lastT = -1, stall = 0, pausedFor = 0;
+      iv = setInterval(function () {
+        if (!mvtRecording) { clearInterval(iv); return; }
+        var t = v.currentTime;
+        if (dur > 0) {
+          toast('合成中 ' + Math.min(100, Math.round(t / dur * 100)) + '%（原速录制，请勿切后台/关页面）');
+        } else {
+          toast('合成中 ' + Math.floor(t / 60) + '分' + Math.floor(t % 60) + '秒（请勿切后台）');
+        }
+        if (v.paused && !v.ended) {
+          pausedFor++;
+          if (pausedFor === 5) toast('视频处于暂停，录制仍在继续 —— 请恢复播放', 5000);
+          if (pausedFor >= 120) { toast('暂停过久，已停止录制'); finish(); return; }
+        } else { pausedFor = 0; }
+
+        if (Math.abs(t - lastT) < 0.05) {
+          stall++;
+          if (stall === 30) toast('画面已 30 秒无进展，检查是否卡在缓冲', 5000);
+          if (stall >= 90) { toast('长时间无进展，已停止'); finish(); }
+        } else { stall = 0; }
+        lastT = t;
+      }, 1000);
+
+      /* 安全上限：按片长留 40% 余量，绝对不超过 3 小时 */
+      var limitMs = dur > 0 ? Math.ceil(dur * 1000 * 1.4) + 120000 : 40 * 60 * 1000;
+      limitMs = Math.min(limitMs, 3 * 60 * 60 * 1000);
+      hardStop = setTimeout(function () {
+        if (mvtRecording) { toast('已到安全上限，停止录制', 4000); finish(); }
+      }, limitMs);
+
+      toast(dur > 0 ? '开始合成，需约 ' + Math.ceil(dur / 60) + ' 分钟（原速录制，请勿切后台/关页面）'
+                    : '开始合成…（请勿切后台/关页面）', 4000);
+    }
+
+    if (v.readyState >= 2) begin();
+    else v.addEventListener('canplay', begin, { once: true });
+  }
+  window.__mvtMerge = mergeRecord;
+
+  function guessName(src, type) {
+    try {
+      var u = new URL(src, location.href);
+      var p = decodeURIComponent(u.pathname).split('/').pop();
+      if (p && /\.[a-z0-9]{2,5}$/i.test(p)) return p;
+    } catch (e) {}
+    return safeName() + '_' + stamp() + '.mp4';
+  }
+
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 8000);
+    toast('已保存：' + name);
   }
 
   /* ================= UI 构建 ================= */
@@ -100,118 +592,6 @@
     return b;
   }
 
-  function downloadVideo() {
-    var v = cur;
-    if (!v) return;
-    var src = v.currentSrc || v.src;
-    if (src && src.indexOf('http') === 0) {
-      /* 直链视频：直接保存原文件 */
-      toast('开始下载…');
-      fetch(src).then(function (r) {
-        if (!r.ok) throw new Error(r.status);
-        var type = r.headers.get('content-type') || '';
-        var name = guessName(src, type);
-        return r.blob().then(function (b) { saveBlob(b, name); });
-      }).catch(function () {
-        toast('直链下载失败，改用合成模式');
-        mergeRecord(v);
-      });
-    } else if (src && (src.indexOf('blob:') === 0 || src.indexOf('data:') === 0)) {
-      /* MSE 加密流（B站等音视频分离站点）：边播边录自动合成 */
-      mergeRecord(v);
-    } else {
-      toast('找不到视频地址');
-    }
-  }
-
-  /* 合成下载：捕获视频元素画面+声音，原速播放录制成单个文件 */
-  var mvtRecording = false;
-  function mergeRecord(v) {
-    if (mvtRecording) { toast('正在合成中，请稍候'); return; }
-    if (!window.MediaRecorder) { toast('浏览器不支持录制合成'); return; }
-    var stream;
-    try {
-      stream = v.captureStream ? v.captureStream() : (v.mozCaptureStream ? v.mozCaptureStream() : null);
-    } catch (e) {
-      toast('该视频受保护，无法捕获合成');
-      return;
-    }
-    if (!stream || !stream.getVideoTracks().length) {
-      toast('无法捕获视频流，无法合成');
-      return;
-    }
-    var mime = '';
-    ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].forEach(function (t) {
-      if (!mime && window.MediaRecorder.isTypeSupported(t)) mime = t;
-    });
-    var rec;
-    try {
-      rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    } catch (e) {
-      toast('录制器启动失败');
-      return;
-    }
-    mvtRecording = true;
-    var chunks = [];
-    var wasRate = v.playbackRate;
-    var wasMuted = v.muted;
-    var wasVolume = v.volume;
-    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop = function () {
-      mvtRecording = false;
-      v.playbackRate = wasRate;
-      v.muted = wasMuted;
-      v.volume = wasVolume;
-      /* 关键：释放捕获流，否则元素声音可能被劫持变哑 */
-      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-      var b = new Blob(chunks, { type: 'video/webm' });
-      if (b.size < 1000) { toast('合成失败：没录到内容'); return; }
-      saveBlob(b, '合成_' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.webm');
-    };
-    var dur = v.duration || 0;
-    v.addEventListener('ended', onEnd, { once: true });
-    function onEnd() {
-      clearInterval(iv);
-      if (rec.state !== 'inactive') rec.stop();
-    }
-    var iv = setInterval(function () {
-      if (!mvtRecording) { clearInterval(iv); return; }
-      if (dur > 0) {
-        toast('合成中 ' + Math.min(100, Math.round(v.currentTime / dur * 100)) + '%（原速录制，请勿关闭页面）');
-      } else {
-        toast('合成中…（请勿关闭页面）');
-      }
-    }, 1000);
-    /* 安全上限：最多录 40 分钟 */
-    setTimeout(function () { if (mvtRecording && rec.state !== 'inactive') { clearInterval(iv); try { rec.stop(); } catch (e) {} } }, 40 * 60 * 1000);
-    try { v.currentTime = 0; } catch (e) {}
-    v.muted = false;
-    var pr = v.play();
-    if (pr && pr.catch) pr.catch(function () {});
-    rec.start(1000);
-    toast(dur > 0 ? '开始合成，需约 ' + Math.ceil(dur / 60) + ' 分钟（原速录制，请勿关闭页面）' : '开始合成…');
-  }
-  window.__mvtMerge = mergeRecord; /* 供测试/控制台手动调用 */
-
-  function guessName(src, type) {
-    try {
-      var u = new URL(src, location.href);
-      var p = decodeURIComponent(u.pathname).split('/').pop();
-      if (p && /\.[a-z0-9]{2,5}$/i.test(p)) return p;
-    } catch (e) {}
-    return '视频_' + Date.now() + (/mp4/i.test(type) ? '.mp4' : '.mp4');
-  }
-
-  function saveBlob(blob, name) {
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
-    toast('已保存：' + name);
-  }
-
   function mSep() {
     var d = document.createElement('div');
     d.className = 'mvt-sep';
@@ -227,11 +607,19 @@
   function buildBar() {
     bar = document.createElement('div');
     bar.className = 'mvt-bar';
+    bar.setAttribute('data-mvt-ver', '1.5.1');
 
     var logo = document.createElement('span');
     logo.className = 'mvt-logo';
     logo.textContent = '工具箱';
     bar.appendChild(logo);
+
+    /* 版本角标：页面上看到 v1.5.1 才说明新版真的生效了 */
+    var ver = document.createElement('span');
+    ver.className = 'mvt-ver';
+    ver.textContent = 'v1.5.1';
+    ver.title = '脚本版本号';
+    bar.appendChild(ver);
 
     /* --- 倍速 --- */
     rateBtn = mBtn('倍速 1x', true);
@@ -292,12 +680,23 @@
     fltBtn.appendChild(mFlt);
     bar.appendChild(fltBtn);
 
-    /* --- 下载 --- */
-    var dlBtn = mBtn('下载', false);
-    dlBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      downloadVideo();
-    });
+    /* --- 下载（三种模式） --- */
+    var dlBtn = mBtn('下载', true);
+    var mDl = document.createElement('div');
+    mDl.className = 'mvt-menu';
+    /* 优化：把真正能用的 yt-dlp 路径放到最前并标推荐，B站会出垃圾的①降级标注 */
+    mDl.appendChild(mItem('① 本地下载脚本（推荐·yt-dlp）', function () { genDownBat(); }));
+    mDl.appendChild(mItem('② 通用下载脚本（粘链接）', function () { genDownBatGeneric(); }));
+    mDl.appendChild(mItem('③ 智能下载（部分站点）', function () { downloadVideo(); }));
+    mDl.appendChild(mItem('④ 分片合并（仅部分站点）', function () { segDownload(); }));
+    mDl.appendChild(mItem('⑤ 边播边录（兜底·慢）', function () { mergeRecord(cur); }));
+    mDl.appendChild(mSep());
+    mDl.appendChild(mItem('分片状态', function () { reportSeg(); }));
+    mDl.appendChild(mItem('清空分片缓存', function () {
+      CAP.items = []; CAP.bytes = 0; CAP.seq = 0; CAP.overflow = false;
+      toast('分片缓存已清空');
+    }));
+    dlBtn.appendChild(mDl);
     bar.appendChild(dlBtn);
 
     /* --- 工具 --- */
@@ -313,7 +712,7 @@
           if (!b) { toast('截图失败'); return; }
           var a = document.createElement('a');
           a.href = URL.createObjectURL(b);
-          a.download = '截图_' + new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '.png';
+          a.download = '截图_' + stamp() + '.png';
           document.body.appendChild(a); a.click(); a.remove();
           toast('截图已保存');
         }, 'image/png');
@@ -345,6 +744,19 @@
     toolBtn.appendChild(mTool);
     bar.appendChild(toolBtn);
 
+    /* --- 停止（仅在下载/录制进行中显示） --- */
+    stopBtn = document.createElement('button');
+    stopBtn.className = 'mvt-btn mvt-stop';
+    stopBtn.textContent = '■ 停止';
+    stopBtn.style.display = 'none';
+    stopBtn.title = '立即停止当前下载/录制';
+    stopBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (mvtRecording && mvtStopFn) { mvtStopFn(); }
+      if (segRunning) { segAbort = true; toast('已取消分片下载', 3000); }
+    });
+    bar.appendChild(stopBtn);
+
     /* 下拉开合 */
     bar.addEventListener('click', function (e) {
       var btn = e.target.closest('.mvt-btn.mvt-has-menu');
@@ -356,14 +768,26 @@
     });
     document.addEventListener('click', closeMenus);
 
-    /* 鼠标离开工具栏后隐藏 */
     bar.addEventListener('mouseenter', function () { clearTimeout(hideTimer); bar.classList.add('mvt-on'); });
     bar.addEventListener('mouseleave', slideUpSoon);
 
     document.body.appendChild(bar);
   }
 
-  /* ================= 显隐与定位（顶边沿隐藏式） ================= */
+  function setRate(v, r) {
+    v.__mvt.rate = r;
+    v.playbackRate = r;
+    toast('倍速：' + r + 'x');
+    updateRateBtn();
+  }
+
+  function updateRateBtn() {
+    if (!cur || !rateBtn) return;
+    var label = rateBtn.querySelector('.mvt-label');
+    if (label) label.textContent = '倍速 ' + cur.playbackRate + 'x';
+  }
+
+  /* ================= 显隐与定位 ================= */
   function showFor(video) {
     cur = video;
     if (!video.__mvt) { video.__mvt = newState(); }
@@ -401,10 +825,6 @@
     bar.style.left = Math.max(8, Math.min(left, window.innerWidth - bar.offsetWidth - 8)) + 'px';
   }
 
-  setInterval(positionBar, 250);
-  window.addEventListener('scroll', positionBar, true);
-  window.addEventListener('resize', positionBar);
-
   /* ================= 绑定视频 ================= */
   var bound = new WeakSet();
 
@@ -412,21 +832,25 @@
     if (bound.has(video)) return;
     if (!(video instanceof HTMLVideoElement)) return;
     var r = video.getBoundingClientRect();
-    /* 只过滤当时明显是小窗/广告的：优酷等站点初始 rect 可能为 0，不能按尺寸拒绝 */
     if (r.width > 0 && (r.width < 260 || r.height < 140)) return;
     bound.add(video);
-
     video.addEventListener('mouseenter', function () { showFor(video); });
   }
 
   function scan() {
     document.querySelectorAll('video').forEach(bind);
+
+    /* 若旧版 1.4.2 也在启用，它会在之后建出第二条工具栏；
+       这里把不带 data-mvt-ver 的那条清掉，避免双工具栏/双录制 */
+    var bars = document.querySelectorAll('.mvt-bar');
+    if (bars.length > 1) {
+      for (var i = 0; i < bars.length; i++) {
+        if (bars[i] !== bar && !bars[i].hasAttribute('data-mvt-ver')) bars[i].remove();
+      }
+    }
   }
 
-  var mo = new MutationObserver(scan);
-
-  /* 全局鼠标检测：鼠标靠近页面顶边沿（工具栏常驻处）滑出工具栏；
-     光标落在视频矩形内则把工具栏对齐到该视频（优酷等遮挡层站点 mouseenter 收不到） */
+  /* ================= 鼠标/全屏 ================= */
   var lastHitCheck = 0;
   function onDocMove(e) {
     var now = Date.now();
@@ -434,20 +858,17 @@
     lastHitCheck = now;
     var x = e.clientX, y = e.clientY;
 
-    /* 工具栏自身区域：保持展开 */
     var br = bar.getBoundingClientRect();
     if (x >= br.left - 4 && x <= br.right + 4 && y <= br.bottom + 8) {
       clearTimeout(hideTimer);
       if (!bar.classList.contains('mvt-on')) slideDown();
       return;
     }
-    /* 展开状态下，鼠标离顶边沿较近时保持；走远且不在工具栏上则收起 */
     if (bar.classList.contains('mvt-on')) {
       if (y <= 60) { clearTimeout(hideTimer); return; }
       slideUpSoon();
     }
 
-    /* 光标进入视频：记住该视频并对齐工具栏位置 */
     var hit = null;
     document.querySelectorAll('video').forEach(function (v) {
       if (hit) return;
@@ -457,14 +878,12 @@
     });
     if (hit) {
       if (cur !== hit) { showFor(hit); }
-      /* 悬停视频即滑出（同 h5player），并保持对齐到视频右缘 */
       clearTimeout(hideTimer);
       if (!bar.classList.contains('mvt-on')) { slideDown(); }
       positionBar();
     }
   }
 
-  /* 全屏支持：全屏时把工具栏挂进全屏元素，退出时归还 body */
   function onFsChange() {
     var fs = document.fullscreenElement || document.webkitFullscreenElement;
     if (fs && bar.parentElement !== fs) {
@@ -474,14 +893,26 @@
     }
   }
 
+  /* ================= 启动 ================= */
   function start() {
+    var st = document.createElement('style');
+    st.textContent = css;
+    (document.head || document.documentElement).appendChild(st);
+
     toastEl = document.createElement('div');
     toastEl.className = 'mvt-toast';
+    toastEl.style.whiteSpace = 'pre-line';
     document.body.appendChild(toastEl);
+
     buildBar();
     scan();
+
+    var mo = new MutationObserver(scan);
     mo.observe(document.documentElement, { childList: true, subtree: true });
     setInterval(scan, 2000);
+    setInterval(positionBar, 250);
+    window.addEventListener('scroll', positionBar, true);
+    window.addEventListener('resize', positionBar);
     document.addEventListener('mousemove', onDocMove, true);
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
