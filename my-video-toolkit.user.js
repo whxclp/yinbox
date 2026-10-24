@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         我的视频工具箱
 // @namespace    whxclp
-// @version      1.5.3
+// @version      1.5.4
 // @description  自研轻量视频增强：倍速调速、画面旋转/镜像/缩放/位移、亮度对比度饱和度滤镜、截图、画中画、循环播放。下载推荐用本机 yt-dlp 脚本（① 当前页 / ② 任意链接），兜底为分片合并与边播边录。菜单固定向左展开，绝不超出屏幕右侧。
 // @author       whxclp
 // @match        *://*/*
@@ -424,6 +424,154 @@
     return L.join('\r\n') + '\r\n';
   }
 
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var p = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return p(h) + ':' + p(m) + ':' + p(s);
+  }
+
+  /* ================= 片段下载：暂停→记录当前播放点→前后各留 N 秒 =================
+   * 先下完整视频到临时目录，再用 ffmpeg 按时间精确裁剪出片段（全站通用、边界精确）。
+   * 自举补齐 yt-dlp/ffmpeg，重装系统后也能用。 */
+  function buildYtDlpSegBat(startSec, endSec, bakedUrl) {
+    var S = fmtTime(startSec), E = fmtTime(endSec);
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function fn(sec) {
+      sec = Math.max(0, Math.floor(sec || 0));
+      return pad(Math.floor(sec / 3600)) + pad(Math.floor((sec % 3600) / 60)) + pad(sec % 60);
+    }
+    var outName = '片段_' + fn(startSec) + '-' + fn(endSec) + '.mp4';
+    var L = [
+      '@echo off',
+      'chcp 65001 >nul',
+      'setlocal EnableDelayedExpansion',
+      '',
+      'set "TOOLS=%LOCALAPPDATA%\\mvt\\bin"',
+      'if not exist "%TOOLS%" mkdir "%TOOLS%" >nul 2>nul',
+      'set "YTDLP=%TOOLS%\\yt-dlp.exe"',
+      'if not exist "%YTDLP%" (',
+      '  echo [mvt] 首次运行：下载 yt-dlp ...',
+      '  curl.exe -L -o "%YTDLP%" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"',
+      '  del /f /q "%YTDLP%:Zone.Identifier" 2>nul',
+      ')',
+      'if not exist "%YTDLP%" (',
+      '  echo [mvt] yt-dlp 下载失败，请检查网络后重试。',
+      '  pause & exit /b 1',
+      ')',
+      '',
+      'set "FFDIR=%TOOLS%\\ffmpeg\\bin"',
+      'if not exist "%FFDIR%\\ffmpeg.exe" (',
+      '  echo [mvt] 首次运行：下载 ffmpeg（约 70MB，请稍候）...',
+      '  set "FFZIP=%TOOLS%\\ffmpeg.zip"',
+      '  curl.exe -L -o "!FFZIP!" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"',
+      '  if exist "!FFZIP!" (',
+      '    echo [mvt] 解压 ffmpeg ...',
+      '    if not exist "%TOOLS%\\ffmpeg_extract" mkdir "%TOOLS%\\ffmpeg_extract"',
+      '    tar -xf "!FFZIP!" -C "%TOOLS%\\ffmpeg_extract"',
+      '    for /d %%D in ("%TOOLS%\\ffmpeg_extract\\ffmpeg-*") do (',
+      '      if exist "%%D\\bin\\ffmpeg.exe" xcopy /E /Y "%%D\\*" "%TOOLS%\\ffmpeg\\" >nul',
+      '    )',
+      '    rd /s /q "%TOOLS%\\ffmpeg_extract" >nul 2>nul',
+      '    del /f /q "!FFZIP!" >nul 2>nul',
+      '  )',
+      ')',
+      'if not exist "%FFDIR%\\ffmpeg.exe" (',
+      '  echo [mvt] ffmpeg 下载/解压失败，请检查网络后重试。',
+      '  pause & exit /b 1',
+      ')',
+      '',
+      'set "OUTDIR=%USERPROFILE%\\Desktop\\视频下载"',
+      'if not exist "%OUTDIR%" mkdir "%OUTDIR%" >nul 2>nul',
+      'set "URL=' + bakedUrl + '"',
+      'if "%URL%"=="" (',
+      '  echo  [mvt] 链接为空。',
+      '  pause & exit /b 1',
+      ')',
+      '',
+      'set "TMPD=%OUTDIR%\\__seg_tmp"',
+      'if not exist "%TMPD%" mkdir "%TMPD%"',
+      'echo.',
+      'echo  [mvt] 步骤1/2：下载完整视频到临时目录...',
+      '"%YTDLP%" --no-playlist -f "bv*+ba/b" --merge-output-format mp4 --ffmpeg-location "%FFDIR%" -o "%TMPD%\\full.%%(ext)s" --no-mtime "%URL%"',
+      'if not exist "%TMPD%\\full.mp4" (',
+      '  echo  [mvt] 完整视频下载失败，见上方信息。',
+      '  pause & exit /b 1',
+      ')',
+      'echo.',
+      'echo  [mvt] 步骤2/2：ffmpeg 精确裁剪 ' + S + ' ~ ' + E + ' -> ' + outName,
+      '"%FFDIR%\\ffmpeg.exe" -ss ' + S + ' -to ' + E + ' -i "%TMPD%\\full.mp4" -c:v libx264 -c:a aac -preset veryfast "%OUTDIR%\\' + outName + '"',
+      'echo.',
+      'if errorlevel 1 ( echo  [mvt] 裁剪失败，完整视频已保留在 %TMPD% ) else ( echo  [mvt] 完成：%OUTDIR%\\' + outName + ' )',
+      'del /f /q "%TMPD%\\full.mp4" 2>nul',
+      'rd /s /q "%TMPD%" 2>nul',
+      'pause'
+    ];
+    return L.join('\r\n') + '\r\n';
+  }
+
+  function genSegBat() {
+    var v = cur;
+    if (!v || !v.currentTime) { toast('没有正在播放的视频，无法定位播放点', 3000); return; }
+    var ct = v.currentTime;
+    var url = String(location.href || '').split('#')[0];
+    if (!/bilibili\\.com/i.test(url) && cur) {
+      var s = cur.currentSrc || cur.src || '';
+      if (s && s.indexOf('http') === 0) url = s;
+    }
+    if (!url) { toast('拿不到视频地址', 3000); return; }
+    showSegPanel(ct, url);
+  }
+
+  function showSegPanel(ct, url) {
+    var mask = document.createElement('div');
+    mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483646;';
+    var card = document.createElement('div');
+    card.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;color:#222;'
+      + 'border:1px solid #ccc;border-radius:10px;padding:18px 20px;z-index:2147483647;'
+      + 'font:14px/1.6 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.25);min-width:300px;';
+    card.innerHTML =
+      '<div style="font-weight:700;margin-bottom:10px;">片段下载 · 当前播放点 <span style="color:#c33a2e;">'
+      + fmtTime(ct) + '</span></div>'
+      + '<div style="margin:6px 0;">前留 <input id="mvtSegB" type="number" value="30" min="0" style="width:64px;"> 秒</div>'
+      + '<div style="margin:6px 0;">后留 <input id="mvtSegA" type="number" value="30" min="0" style="width:64px;"> 秒</div>'
+      + '<div style="margin-top:10px;color:#888;font-size:12px;">将下载：<span id="mvtSegPrev"></span>（整段下完再用 ffmpeg 精确裁剪）</div>'
+      + '<div style="margin-top:14px;text-align:right;">'
+      + '<button id="mvtSegCancel" style="background:#eee;color:#333;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;">取消</button>'
+      + '<button id="mvtSegOk" style="background:#4ec98a;color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;margin-left:8px;">生成下载脚本</button>'
+      + '</div>';
+    function close() { if (mask.parentNode) mask.parentNode.removeChild(mask); }
+    mask.appendChild(card);
+    document.body.appendChild(mask);
+    function upd() {
+      var b = parseFloat(document.getElementById('mvtSegB').value) || 0;
+      var a = parseFloat(document.getElementById('mvtSegA').value) || 0;
+      document.getElementById('mvtSegPrev').textContent =
+        fmtTime(Math.max(0, ct - b)) + ' ~ ' + fmtTime(ct + a);
+    }
+    document.getElementById('mvtSegB').addEventListener('input', upd);
+    document.getElementById('mvtSegA').addEventListener('input', upd);
+    document.getElementById('mvtSegCancel').addEventListener('click', close);
+    document.getElementById('mvtSegOk').addEventListener('click', function () {
+      var b = parseFloat(document.getElementById('mvtSegB').value) || 0;
+      var a = parseFloat(document.getElementById('mvtSegA').value) || 0;
+      var start = Math.max(0, Math.floor(ct - b));
+      var end = Math.floor(ct + a);
+      var bat = buildYtDlpSegBat(start, end, url);
+      saveBlob(new Blob([bat], { type: 'application/octet-stream' }), '片段下载.bat');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(bat).then(
+          function () { close(); toast('已生成「片段下载.bat」并复制，双击即下 ' + fmtTime(start) + '~' + fmtTime(end) + '（首次自动拉依赖）', 6000); },
+          function () { close(); toast('已生成「片段下载.bat」，双击即下 ' + fmtTime(start) + '~' + fmtTime(end), 4000); }
+        );
+      } else {
+        close(); toast('已生成「片段下载.bat」，双击即下 ' + fmtTime(start) + '~' + fmtTime(end), 4000);
+      }
+    });
+    mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+    upd();
+  }
+
   /* ================= 下载模式四：生成本地下载脚本（yt-dlp，最稳） =================
    * 把「当前视频 URL」烤进一个自举 .bat：双击即用，首次运行自动补齐 yt-dlp/ffmpeg，
    * 不依赖本机 Python / WinGet，重装系统后也能用。等价桌面那个 视频下载合并.bat。 */
@@ -641,7 +789,7 @@
   function buildBar() {
     bar = document.createElement('div');
     bar.className = 'mvt-bar';
-    bar.setAttribute('data-mvt-ver', '1.5.1');
+    bar.setAttribute('data-mvt-ver', '1.5.4');
 
     var logo = document.createElement('span');
     logo.className = 'mvt-logo';
@@ -651,7 +799,7 @@
     /* 版本角标：页面上看到 v1.5.1 才说明新版真的生效了 */
     var ver = document.createElement('span');
     ver.className = 'mvt-ver';
-    ver.textContent = 'v1.5.1';
+    ver.textContent = 'v1.5.4';
     ver.title = '脚本版本号';
     bar.appendChild(ver);
 
@@ -724,6 +872,7 @@
     mDl.appendChild(mItem('③ 智能下载（部分站点）', function () { downloadVideo(); }));
     mDl.appendChild(mItem('④ 分片合并（仅部分站点）', function () { segDownload(); }));
     mDl.appendChild(mItem('⑤ 边播边录（兜底·慢）', function () { mergeRecord(cur); }));
+    mDl.appendChild(mItem('⑥ 片段下载（整段下完再剪）', function () { genSegBat(); }));
     mDl.appendChild(mSep());
     mDl.appendChild(mItem('分片状态', function () { reportSeg(); }));
     mDl.appendChild(mItem('清空分片缓存', function () {
